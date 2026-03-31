@@ -64,11 +64,11 @@ export default function DashboardPage() {
             </CardHeader>
           </Card>
 
-          <Card className="hover:shadow-md transition-shadow opacity-50 cursor-not-allowed">
+          <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => router.push('/archive')}>
             <CardHeader>
               <CardTitle className="text-xl">Newsletter-Archiv</CardTitle>
               <CardDescription>
-                Deine bisherigen Newsletter ansehen (Coming soon)
+                Alle versendeten Newsletter einsehen und nachlesen
               </CardDescription>
             </CardHeader>
           </Card>
