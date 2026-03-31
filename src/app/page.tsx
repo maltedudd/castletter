@@ -3,9 +3,9 @@ import { Button } from '@/components/ui/button'
 
 export default function Home() {
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="flex flex-col flex-1">
       {/* Hero Section */}
-      <main className="flex-1 flex items-center justify-center section-spacing">
+      <div className="flex-1 flex items-center justify-center section-spacing">
         <div className="max-w-5xl mx-auto container-spacing text-center space-y-12">
           {/* Logo/Brand */}
           <div className="space-y-4">
@@ -56,16 +56,7 @@ export default function Home() {
             </Link>
           </div>
         </div>
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t py-8">
-        <div className="max-w-7xl mx-auto container-spacing">
-          <p className="text-center text-sm text-muted-foreground">
-            © 2026 Castletter. Bleib auf dem Laufenden mit deinen Lieblings-Podcasts.
-          </p>
-        </div>
-      </footer>
+      </div>
     </div>
   )
 }
