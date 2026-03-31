@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     // Fetch pending episodes
     const { data: episodes, error: fetchError } = await supabase
       .from('episodes')
-      .select('id, audio_url, title, subscription_id')
+      .select('id, audio_url, title, subscription_id, transcript')
       .eq('status', 'pending_transcription')
       .order('published_at', { ascending: true })
       .limit(BATCH_SIZE)
@@ -65,6 +65,7 @@ interface Episode {
   audio_url: string
   title: string
   subscription_id: string
+  transcript: string | null
 }
 
 async function transcribeEpisode(
@@ -72,6 +73,15 @@ async function transcribeEpisode(
   openai: OpenAI,
   episode: Episode
 ): Promise<{ success: boolean }> {
+  // Skip Whisper API if transcript already exists in DB
+  if (episode.transcript && episode.transcript.trim().length > 0) {
+    await supabase
+      .from('episodes')
+      .update({ status: 'transcribed', error_message: null })
+      .eq('id', episode.id)
+    return { success: true }
+  }
+
   // Mark as transcribing
   await supabase
     .from('episodes')
