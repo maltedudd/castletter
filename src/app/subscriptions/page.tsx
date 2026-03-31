@@ -161,7 +161,6 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
                   width={96}
                   height={96}
                   className="rounded-lg object-cover shrink-0"
-                  unoptimized
                 />
               ) : (
                 <div className="w-24 h-24 rounded-lg bg-muted flex items-center justify-center text-3xl shrink-0">
@@ -210,7 +209,6 @@ function PodcastCard({
           width={80}
           height={80}
           className="rounded-lg object-cover shrink-0"
-          unoptimized
         />
       ) : (
         <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center text-2xl shrink-0">

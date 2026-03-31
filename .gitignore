@@ -37,3 +37,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Code configuration & agents
+.claude/
+
+# Template/meta files
+HOW_TO_USE_AGENTS.md
+PROJECT_CONTEXT.md
+TEMPLATE_CHANGELOG.md
+features/
