@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     // Fetch all subscriptions
     const { data: subscriptions, error: subError } = await supabase
       .from('podcast_subscriptions')
-      .select('id, feed_url, title')
+      .select('id, feed_url, title, created_at')
       .limit(100)
 
     if (subError || !subscriptions) {
@@ -71,6 +71,7 @@ interface Subscription {
   id: string
   feed_url: string
   title: string
+  created_at: string
 }
 
 async function processSubscription(
@@ -92,6 +93,10 @@ async function processSubscription(
     const feed = await parser.parseString(xml)
     const now = new Date()
     const thirtyDaysAgo = new Date(now.getTime() - THIRTY_DAYS_MS)
+    // Only pick up episodes published after the subscription was created.
+    // This prevents the first feed check from importing weeks of backlog.
+    const subscribedAt = new Date(subscription.created_at)
+    const cutoffDate = subscribedAt > thirtyDaysAgo ? subscribedAt : thirtyDaysAgo
 
     // Get existing GUIDs for this subscription to check duplicates
     const { data: existingEpisodes } = await supabase
@@ -113,8 +118,8 @@ async function processSubscription(
         const pubDate = item.pubDate ? new Date(item.pubDate) : null
         if (!pubDate || isNaN(pubDate.getTime())) return false
 
-        // Only episodes from last 30 days
-        if (pubDate < thirtyDaysAgo) return false
+        // Only episodes published after subscription was created (or 30 days, whichever is newer)
+        if (pubDate < cutoffDate) return false
 
         // Not in the future
         if (pubDate > now) return false
