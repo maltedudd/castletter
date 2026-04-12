@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,6 +10,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 export default function DashboardPage() {
   const { user, loading, signOut } = useAuth()
   const router = useRouter()
+  const t = useTranslations('dashboard')
+  const tNav = useTranslations('nav')
 
   useEffect(() => {
     if (!loading && !user) {
@@ -34,13 +37,13 @@ export default function DashboardPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-12">
           <div>
-            <h1 className="text-4xl font-bold mb-2">Dashboard</h1>
+            <h1 className="text-4xl font-bold mb-2">{t('title')}</h1>
             <p className="text-muted-foreground text-lg">
-              Willkommen zurück, {user.email}
+              {t('welcome', { email: user.email ?? '' })}
             </p>
           </div>
           <Button onClick={signOut} variant="outline">
-            Abmelden
+            {tNav('signOut')}
           </Button>
         </div>
 
@@ -48,27 +51,27 @@ export default function DashboardPage() {
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 mb-12">
           <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => router.push('/settings')}>
             <CardHeader>
-              <CardTitle className="text-xl">Einstellungen</CardTitle>
+              <CardTitle className="text-xl">{t('settingsTitle')}</CardTitle>
               <CardDescription>
-                Newsletter-Email und Versandzeit konfigurieren
+                {t('settingsDescription')}
               </CardDescription>
             </CardHeader>
           </Card>
 
           <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => router.push('/subscriptions')}>
             <CardHeader>
-              <CardTitle className="text-xl">Podcast-Abos</CardTitle>
+              <CardTitle className="text-xl">{t('subscriptionsTitle')}</CardTitle>
               <CardDescription>
-                Podcasts abonnieren und verwalten
+                {t('subscriptionsDescription')}
               </CardDescription>
             </CardHeader>
           </Card>
 
           <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => router.push('/archive')}>
             <CardHeader>
-              <CardTitle className="text-xl">Newsletter-Archiv</CardTitle>
+              <CardTitle className="text-xl">{t('archiveTitle')}</CardTitle>
               <CardDescription>
-                Alle versendeten Newsletter einsehen und nachlesen
+                {t('archiveDescription')}
               </CardDescription>
             </CardHeader>
           </Card>
@@ -77,23 +80,23 @@ export default function DashboardPage() {
         {/* Welcome Message */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">Willkommen bei Castletter!</CardTitle>
+            <CardTitle className="text-2xl">{t('welcomeCardTitle')}</CardTitle>
             <CardDescription className="text-base">
-              Erhalte täglich personalisierte Newsletter zu deinen Lieblings-Podcasts
+              {t('welcomeCardDescription')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-3">
-              <h3 className="font-semibold text-lg">Nächste Schritte:</h3>
+              <h3 className="font-semibold text-lg">{t('nextStepsTitle')}</h3>
               <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
-                <li>Konfiguriere deine Newsletter-Einstellungen</li>
-                <li>Abonniere deine Lieblings-Podcasts</li>
-                <li>Erhalte täglich Newsletter mit Podcast-Zusammenfassungen</li>
+                <li>{t('nextStep1')}</li>
+                <li>{t('nextStep2')}</li>
+                <li>{t('nextStep3')}</li>
               </ol>
             </div>
             <div className="pt-4">
               <Button onClick={() => router.push('/settings')} size="lg">
-                Einstellungen konfigurieren
+                {t('configureSettings')}
               </Button>
             </div>
           </CardContent>

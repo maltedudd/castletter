@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import { Trash2 } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -29,6 +30,7 @@ import type { PodcastSubscription, PodcastFeedMeta } from '@/types/database'
 function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
   const { user } = useAuth()
   const supabase = createClient()
+  const t = useTranslations('subscriptions')
 
   const [feedUrl, setFeedUrl] = useState('')
   const [loading, setLoading] = useState(false)
@@ -52,14 +54,14 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
       const data = await res.json()
 
       if (!res.ok) {
-        setError(data.error || 'Fehler beim Prüfen des Feeds')
+        setError(data.error || t('errorValidateFeed'))
         setLoading(false)
         return
       }
 
       setPreview(data as PodcastFeedMeta)
     } catch {
-      setError('Netzwerkfehler – bitte versuche es erneut')
+      setError(t('errorNetworkFeed'))
     } finally {
       setLoading(false)
     }
@@ -84,9 +86,9 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
       if (dbError) {
         // Unique constraint violation → duplicate
         if (dbError.code === '23505') {
-          setError('Dieser Podcast ist bereits abonniert')
+          setError(t('errorAlreadySubscribed'))
         } else {
-          setError('Fehler beim Speichern – bitte versuche es erneut')
+          setError(t('errorSaveFeed'))
         }
         setSubscribing(false)
         return
@@ -97,7 +99,7 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
       setPreview(null)
       onSubscribed()
     } catch {
-      setError('Ein unerwarteter Fehler ist aufgetreten')
+      setError(t('errorUnexpected'))
     } finally {
       setSubscribing(false)
     }
@@ -111,9 +113,9 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-2xl">Neuen Podcast hinzufügen</CardTitle>
+        <CardTitle className="text-2xl">{t('addPodcastTitle')}</CardTitle>
         <CardDescription className="text-base">
-          Füge die RSS-Feed URL deines Lieblings-Podcasts ein
+          {t('addPodcastDescription')}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -121,13 +123,13 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
         <form onSubmit={handleValidate} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="feed-url" className="text-sm font-medium">
-              RSS-Feed URL
+              {t('feedUrlLabel')}
             </Label>
             <div className="flex gap-3">
               <Input
                 id="feed-url"
                 type="url"
-                placeholder="https://podcast.example.com/feed.xml"
+                placeholder={t('feedUrlPlaceholder')}
                 value={feedUrl}
                 onChange={(e) => setFeedUrl(e.target.value)}
                 required
@@ -136,7 +138,7 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
               />
               {!preview && (
                 <Button type="submit" disabled={loading || !feedUrl.trim()} className="h-11">
-                  {loading ? 'Prüfe...' : 'Feed prüfen'}
+                  {loading ? t('validateButtonLoading') : t('validateButton')}
                 </Button>
               )}
             </div>
@@ -178,10 +180,10 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
             </div>
             <div className="flex gap-3 pt-2">
               <Button onClick={handleSubscribe} disabled={subscribing}>
-                {subscribing ? 'Wird abonniert...' : 'Abonnieren'}
+                {subscribing ? t('subscribeButtonLoading') : t('subscribeButton')}
               </Button>
               <Button variant="outline" onClick={handleCancel} disabled={subscribing}>
-                Abbrechen
+                {t('cancelButton')}
               </Button>
             </div>
           </div>
@@ -250,23 +252,24 @@ function DeletePodcastDialog({
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
 }) {
+  const t = useTranslations('subscriptions')
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Podcast entfernen?</AlertDialogTitle>
+          <AlertDialogTitle>{t('deleteTitle')}</AlertDialogTitle>
           <AlertDialogDescription>
-            Möchtest du &laquo;{podcast?.title}&raquo; wirklich entfernen? Du erhältst
-            dann keine Newsletter-Zusammenfassungen mehr für diesen Podcast.
+            {t('deleteDescription', { title: podcast?.title ?? '' })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+          <AlertDialogCancel>{t('deleteCancel')}</AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
           >
-            Ja, entfernen
+            {t('deleteConfirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -280,6 +283,7 @@ export default function SubscriptionsPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
+  const t = useTranslations('subscriptions')
 
   const [podcasts, setPodcasts] = useState<PodcastSubscription[]>([])
   const [loading, setLoading] = useState(true)
@@ -322,7 +326,7 @@ export default function SubscriptionsPage() {
   }, [successMessage])
 
   function handleSubscribed() {
-    setSuccessMessage('Podcast erfolgreich abonniert')
+    setSuccessMessage(t('successSubscribed'))
     loadPodcasts()
   }
 
@@ -340,7 +344,7 @@ export default function SubscriptionsPage() {
       .eq('id', deleteTarget.id)
 
     if (!error) {
-      setSuccessMessage('Podcast entfernt')
+      setSuccessMessage(t('successRemoved'))
       setPodcasts((prev) => prev.filter((p) => p.id !== deleteTarget.id))
     }
 
@@ -367,11 +371,11 @@ export default function SubscriptionsPage() {
             href="/dashboard"
             className="text-sm text-muted-foreground hover:text-primary transition-colors mb-4 inline-block"
           >
-            ← Zurück zum Dashboard
+            {t('backToDashboard')}
           </Link>
-          <h1 className="text-4xl font-bold mb-2">Podcast-Abos</h1>
+          <h1 className="text-4xl font-bold mb-2">{t('title')}</h1>
           <p className="text-muted-foreground text-lg">
-            Verwalte deine abonnierten Podcasts
+            {t('description')}
           </p>
         </div>
 
@@ -392,11 +396,11 @@ export default function SubscriptionsPage() {
         {/* Podcast List */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">Meine Podcasts</CardTitle>
+            <CardTitle className="text-2xl">{t('myPodcastsTitle')}</CardTitle>
             <CardDescription className="text-base">
               {podcasts.length === 0
-                ? 'Du hast noch keine Podcasts abonniert'
-                : `${podcasts.length} Podcast${podcasts.length === 1 ? '' : 's'} abonniert`}
+                ? t('noPodcasts')
+                : t(podcasts.length === 1 ? 'podcastCount_one' : 'podcastCount_other', { count: podcasts.length })}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -404,10 +408,10 @@ export default function SubscriptionsPage() {
               <div className="py-12 text-center">
                 <div className="text-5xl mb-4">🎧</div>
                 <p className="text-muted-foreground text-lg mb-2">
-                  Du hast noch keine Podcasts abonniert
+                  {t('emptyStateTitle')}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Füge deinen ersten Podcast oben über die RSS-Feed URL hinzu!
+                  {t('emptyStateHint')}
                 </p>
               </div>
             ) : (

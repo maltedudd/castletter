@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -22,6 +23,7 @@ export default function SettingsPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
+  const t = useTranslations('settings')
 
   const [email, setEmail] = useState('')
   const [deliveryHour, setDeliveryHour] = useState(8) // Default: 8:00 AM local time
@@ -49,7 +51,7 @@ export default function SettingsPage() {
         if (error && error.code !== 'PGRST116') {
           // PGRST116 = no rows found (first time user)
           console.error('Error loading settings:', error)
-          setError('Fehler beim Laden der Einstellungen')
+          setError(t('errorLoadSettings'))
         }
 
         if (data) {
@@ -62,14 +64,14 @@ export default function SettingsPage() {
         }
       } catch (err) {
         console.error('Error loading settings:', err)
-        setError('Ein unerwarteter Fehler ist aufgetreten')
+        setError(t('errorUnexpected'))
       } finally {
         setLoading(false)
       }
     }
 
     loadSettings()
-  }, [user, supabase])
+  }, [user, supabase, t])
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -85,7 +87,7 @@ export default function SettingsPage() {
     setSaving(true)
 
     if (!user) {
-      setError('Du musst angemeldet sein')
+      setError(t('errorUnexpected'))
       setSaving(false)
       return
     }
@@ -93,7 +95,7 @@ export default function SettingsPage() {
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     if (!emailRegex.test(email)) {
-      setError('Bitte gib eine gültige Email-Adresse ein')
+      setError(t('errorInvalidEmail'))
       setSaving(false)
       return
     }
@@ -113,7 +115,7 @@ export default function SettingsPage() {
 
       if (error) {
         console.error('Error saving settings:', error)
-        setError('Fehler beim Speichern der Einstellungen')
+        setError(t('errorSaveSettings'))
         setSaving(false)
         return
       }
@@ -125,7 +127,7 @@ export default function SettingsPage() {
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (err) {
       console.error('Error saving settings:', err)
-      setError('Ein unerwarteter Fehler ist aufgetreten')
+      setError(t('errorUnexpected'))
       setSaving(false)
     }
   }
@@ -151,11 +153,11 @@ export default function SettingsPage() {
             href="/dashboard"
             className="text-sm text-muted-foreground hover:text-primary transition-colors mb-4 inline-block"
           >
-            ← Zurück zum Dashboard
+            {t('backToDashboard')}
           </Link>
-          <h1 className="text-4xl font-bold mb-2">Einstellungen</h1>
+          <h1 className="text-4xl font-bold mb-2">{t('title')}</h1>
           <p className="text-muted-foreground text-lg">
-            Konfiguriere deine Newsletter-Präferenzen
+            {t('description')}
           </p>
         </div>
 
@@ -163,7 +165,7 @@ export default function SettingsPage() {
         {success && (
           <Alert className="mb-6 border-accent bg-accent/10">
             <AlertDescription className="text-accent-foreground">
-              ✓ Einstellungen erfolgreich gespeichert!
+              {t('successMessage')}
             </AlertDescription>
           </Alert>
         )}
@@ -178,9 +180,9 @@ export default function SettingsPage() {
         {/* Settings Form */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">Newsletter-Einstellungen</CardTitle>
+            <CardTitle className="text-2xl">{t('cardTitle')}</CardTitle>
             <CardDescription className="text-base">
-              Lege fest, wohin und wann deine täglichen Newsletter verschickt werden
+              {t('cardDescription')}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -188,12 +190,12 @@ export default function SettingsPage() {
               {/* Newsletter Email */}
               <div className="space-y-3">
                 <Label htmlFor="newsletter-email" className="text-base font-medium">
-                  Newsletter-Email-Adresse
+                  {t('emailLabel')}
                 </Label>
                 <Input
                   id="newsletter-email"
                   type="email"
-                  placeholder="deine@email.de"
+                  placeholder={t('emailPlaceholder')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -201,14 +203,14 @@ export default function SettingsPage() {
                   className="h-11"
                 />
                 <p className="text-sm text-muted-foreground">
-                  An diese Adresse werden deine täglichen Newsletter verschickt
+                  {t('emailHint')}
                 </p>
               </div>
 
               {/* Delivery Time */}
               <div className="space-y-3">
                 <Label htmlFor="delivery-hour" className="text-base font-medium">
-                  Tägliche Versandzeit
+                  {t('deliveryTimeLabel')}
                 </Label>
                 <Select
                   value={deliveryHour.toString()}
@@ -227,7 +229,7 @@ export default function SettingsPage() {
                   </SelectContent>
                 </Select>
                 <p className="text-sm text-muted-foreground">
-                  Zeitzone: {timezoneName} (deine lokale Zeit)
+                  {t('timezoneHint', { timezone: timezoneName })}
                 </p>
               </div>
 
@@ -238,7 +240,7 @@ export default function SettingsPage() {
                   className="w-full h-11"
                   disabled={saving}
                 >
-                  {saving ? 'Speichern...' : 'Einstellungen speichern'}
+                  {saving ? t('saveButtonLoading') : t('saveButton')}
                 </Button>
               </div>
             </form>
@@ -248,21 +250,13 @@ export default function SettingsPage() {
         {/* Info Card */}
         <Card className="mt-6">
           <CardHeader>
-            <CardTitle className="text-lg">💡 So funktioniert's</CardTitle>
+            <CardTitle className="text-lg">{t('infoCardTitle')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p>
-              • Deine Newsletter werden täglich zur gewählten Zeit verschickt
-            </p>
-            <p>
-              • Du kannst eine andere Email-Adresse als deine Login-Email verwenden
-            </p>
-            <p>
-              • Die Versandzeit wird automatisch in deine lokale Zeitzone konvertiert
-            </p>
-            <p>
-              • Änderungen wirken sich ab dem nächsten Newsletter aus
-            </p>
+            <p>{t('infoBullet1')}</p>
+            <p>{t('infoBullet2')}</p>
+            <p>{t('infoBullet3')}</p>
+            <p>{t('infoBullet4')}</p>
           </CardContent>
         </Card>
       </div>

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
+import { useTranslations, useLocale } from 'next-intl'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -38,14 +39,6 @@ interface ArchiveEntry {
   podcast_cover_image_url: string | null
 }
 
-function formatDate(dateString: string) {
-  return new Date(dateString).toLocaleDateString('de-DE', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  })
-}
-
 function ArchiveEntrySkeleton() {
   return (
     <Card>
@@ -68,6 +61,8 @@ export default function ArchivePage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
+  const t = useTranslations('archive')
+  const locale = useLocale()
 
   const [entries, setEntries] = useState<ArchiveEntry[]>([])
   const [subscriptions, setSubscriptions] = useState<PodcastSubscription[]>([])
@@ -77,6 +72,14 @@ export default function ArchivePage() {
   const [filterSubscriptionId, setFilterSubscriptionId] = useState<string>('all')
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+
+  function formatDate(dateString: string) {
+    return new Date(dateString).toLocaleDateString(locale === 'de' ? 'de-DE' : 'en-US', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    })
+  }
 
   const loadData = useCallback(async () => {
     if (!user) return
@@ -135,7 +138,7 @@ export default function ArchivePage() {
           newsletter_sent_at: row.newsletter_sent_at as string,
           audio_url: row.audio_url,
           subscription_id: row.subscription_id,
-          podcast_title: sub?.title ?? 'Unbekannter Podcast',
+          podcast_title: sub?.title ?? t('unknownPodcast'),
           podcast_cover_image_url: sub?.cover_image_url ?? null,
         }
       })
@@ -144,7 +147,7 @@ export default function ArchivePage() {
     }
 
     setLoading(false)
-  }, [user, supabase, currentPage, filterSubscriptionId])
+  }, [user, supabase, currentPage, filterSubscriptionId, t])
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -183,11 +186,11 @@ export default function ArchivePage() {
             href="/dashboard"
             className="text-sm text-muted-foreground hover:text-primary transition-colors mb-4 inline-block"
           >
-            &larr; Zurück zum Dashboard
+            {t('backToDashboard')}
           </Link>
-          <h1 className="text-4xl font-bold mb-2">Newsletter-Archiv</h1>
+          <h1 className="text-4xl font-bold mb-2">{t('title')}</h1>
           <p className="text-muted-foreground text-lg">
-            Alle deine versendeten Newsletter auf einen Blick
+            {t('description')}
           </p>
         </div>
 
@@ -195,10 +198,10 @@ export default function ArchivePage() {
         <div className="flex items-center gap-3 mb-6">
           <Select value={filterSubscriptionId} onValueChange={handleFilterChange}>
             <SelectTrigger className="w-64">
-              <SelectValue placeholder="Alle Podcasts" />
+              <SelectValue placeholder={t('filterAllPodcasts')} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Alle Podcasts</SelectItem>
+              <SelectItem value="all">{t('filterAllPodcasts')}</SelectItem>
               {subscriptions.map((sub) => (
                 <SelectItem key={sub.id} value={sub.id}>
                   {sub.title}
@@ -209,7 +212,7 @@ export default function ArchivePage() {
 
           {!loading && (
             <span className="text-sm text-muted-foreground">
-              {totalCount} {totalCount === 1 ? 'Eintrag' : 'Einträge'}
+              {t(totalCount === 1 ? 'entryCount_one' : 'entryCount_other', { count: totalCount })}
             </span>
           )}
         </div>
@@ -228,17 +231,17 @@ export default function ArchivePage() {
               <div className="text-5xl mb-4">📬</div>
               <p className="text-lg font-semibold mb-2">
                 {filterSubscriptionId !== 'all'
-                  ? 'Keine Newsletter für diesen Podcast'
-                  : 'Noch keine Newsletter versendet'}
+                  ? t('emptyTitleFiltered')
+                  : t('emptyTitleAll')}
               </p>
               <p className="text-muted-foreground text-sm mb-6">
                 {filterSubscriptionId !== 'all'
-                  ? 'Wähle einen anderen Podcast aus dem Filter.'
-                  : 'Sobald Castletter deinen ersten Newsletter verschickt hat, erscheint er hier.'}
+                  ? t('emptyHintFiltered')
+                  : t('emptyHintAll')}
               </p>
               {filterSubscriptionId === 'all' && (
                 <Button asChild variant="outline">
-                  <Link href="/subscriptions">Podcasts abonnieren</Link>
+                  <Link href="/subscriptions">{t('subscribeLink')}</Link>
                 </Button>
               )}
             </CardContent>
@@ -280,7 +283,7 @@ export default function ArchivePage() {
 
                       {/* Action */}
                       <Button asChild variant="outline" size="sm" className="shrink-0">
-                        <Link href={`/archive/${entry.id}`}>Lesen</Link>
+                        <Link href={`/archive/${entry.id}`}>{t('readButton')}</Link>
                       </Button>
                     </div>
                   </CardContent>
@@ -302,7 +305,7 @@ export default function ArchivePage() {
                     </PaginationItem>
                     <PaginationItem>
                       <span className="flex items-center px-4 text-sm text-muted-foreground">
-                        Seite {currentPage} von {totalPages}
+                        {t('paginationPage', { current: currentPage, total: totalPages })}
                       </span>
                     </PaginationItem>
                     <PaginationItem>

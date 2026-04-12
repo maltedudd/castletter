@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,6 +14,7 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
   const [loading, setLoading] = useState(false)
+  const t = useTranslations('auth')
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
@@ -29,7 +31,7 @@ export default function RegisterPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        setError(data.error ?? 'Ein Fehler ist aufgetreten')
+        setError(data.error ?? t('errorGeneric'))
         setLoading(false)
         return
       }
@@ -37,7 +39,7 @@ export default function RegisterPage() {
       setSuccess(true)
       setLoading(false)
     } catch {
-      setError('Ein unerwarteter Fehler ist aufgetreten')
+      setError(t('errorUnexpected'))
       setLoading(false)
     }
   }
@@ -47,24 +49,24 @@ export default function RegisterPage() {
       <div className="min-h-screen flex items-center justify-center container-spacing section-spacing">
         <Card className="w-full max-w-md shadow-sm">
           <CardHeader className="space-y-3 text-center">
-            <CardTitle className="text-3xl font-bold">Du bist auf der Warteliste!</CardTitle>
+            <CardTitle className="text-3xl font-bold">{t('waitlistTitle')}</CardTitle>
             <CardDescription className="text-base">
-              Wir melden uns, sobald du freigeschaltet wirst
+              {t('waitlistDescription')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Alert className="border-accent bg-accent/10">
               <AlertDescription className="text-center text-accent-foreground">
-                Wir haben deine Anfrage erhalten. Sobald wir deinen Beta-Zugang freischalten, bekommst du eine Email mit deinem Einladungslink.
+                {t('waitlistMessage')}
               </AlertDescription>
             </Alert>
             <p className="text-sm text-muted-foreground text-center pt-2">
-              In der Zwischenzeit freuen wir uns, wenn du Castletter weiterempfiehlst.
+              {t('waitlistShareNote')}
             </p>
           </CardContent>
           <CardFooter className="flex justify-center">
             <Link href="/login">
-              <Button variant="outline">Zur Anmeldung</Button>
+              <Button variant="outline">{t('toLogin')}</Button>
             </Link>
           </CardFooter>
         </Card>
@@ -76,9 +78,9 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center container-spacing section-spacing">
       <Card className="w-full max-w-md shadow-sm">
         <CardHeader className="space-y-3 text-center">
-          <CardTitle className="text-3xl font-bold">Beta-Zugang anfragen</CardTitle>
+          <CardTitle className="text-3xl font-bold">{t('registerTitle')}</CardTitle>
           <CardDescription className="text-base">
-            Trag dich auf die Warteliste ein und erhalte als einer der Ersten Zugang zu Castletter
+            {t('registerDescription')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -91,12 +93,12 @@ export default function RegisterPage() {
 
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium">
-                Email-Adresse
+                {t('emailLabel')}
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="deine@email.de"
+                placeholder={t('emailPlaceholder')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -110,18 +112,18 @@ export default function RegisterPage() {
               className="w-full h-11 mt-4"
               disabled={loading}
             >
-              {loading ? 'Wird eingetragen...' : 'Auf Warteliste eintragen'}
+              {loading ? t('registerButtonLoading') : t('registerButton')}
             </Button>
           </form>
         </CardContent>
         <CardFooter className="flex flex-col space-y-4">
           <div className="text-sm text-center text-muted-foreground">
-            Bereits eingeladen?{' '}
+            {t('alreadyInvited')}{' '}
             <Link
               href="/login"
               className="font-medium text-primary hover:text-primary/80 transition-colors"
             >
-              Jetzt anmelden
+              {t('loginLink')}
             </Link>
           </div>
         </CardFooter>

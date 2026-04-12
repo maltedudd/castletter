@@ -1,7 +1,10 @@
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { getTranslations } from 'next-intl/server'
 
-export default function Home() {
+export default async function Home() {
+  const t = await getTranslations('landing')
+
   return (
     <div className="flex flex-col flex-1">
       {/* Hero Section */}
@@ -13,7 +16,7 @@ export default function Home() {
               Castletter
             </h1>
             <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto">
-              Erhalte täglich personalisierte Newsletter zu deinen Lieblings-Podcasts
+              {t('subtitle')}
             </p>
           </div>
 
@@ -21,23 +24,23 @@ export default function Home() {
           <div className="grid md:grid-cols-3 gap-8 py-12">
             <div className="space-y-3">
               <div className="text-4xl mb-4">🎧</div>
-              <h3 className="text-lg font-semibold">Podcast-Abos</h3>
+              <h3 className="text-lg font-semibold">{t('feature1Title')}</h3>
               <p className="text-muted-foreground">
-                Abonniere deine Lieblings-Podcasts per RSS-Feed
+                {t('feature1Description')}
               </p>
             </div>
             <div className="space-y-3">
               <div className="text-4xl mb-4">📝</div>
-              <h3 className="text-lg font-semibold">KI-Zusammenfassungen</h3>
+              <h3 className="text-lg font-semibold">{t('feature2Title')}</h3>
               <p className="text-muted-foreground">
-                Automatisch generierte Zusammenfassungen neuer Episodes
+                {t('feature2Description')}
               </p>
             </div>
             <div className="space-y-3">
               <div className="text-4xl mb-4">📧</div>
-              <h3 className="text-lg font-semibold">Tägliche Newsletter</h3>
+              <h3 className="text-lg font-semibold">{t('feature3Title')}</h3>
               <p className="text-muted-foreground">
-                Erhalte alle Zusammenfassungen zu deiner Wunschzeit
+                {t('feature3Description')}
               </p>
             </div>
           </div>
@@ -46,12 +49,12 @@ export default function Home() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center pt-8">
             <Link href="/register">
               <Button size="lg" className="w-full sm:w-auto text-lg h-14 px-8">
-                Jetzt starten
+                {t('ctaStart')}
               </Button>
             </Link>
             <Link href="/login">
               <Button size="lg" variant="outline" className="w-full sm:w-auto text-lg h-14 px-8">
-                Anmelden
+                {t('ctaLogin')}
               </Button>
             </Link>
           </div>

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -14,6 +15,7 @@ export default function VerifyEmailPage() {
   const [success, setSuccess] = useState(false)
   const router = useRouter()
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  const t = useTranslations('auth')
 
   function getSupabase() {
     if (!supabaseRef.current) {
@@ -39,13 +41,13 @@ export default function VerifyEmailPage() {
 
         setVerifying(false)
       } catch (err) {
-        setError('Email-Bestätigung fehlgeschlagen')
+        setError(t('verifyErrorMessage'))
         setVerifying(false)
       }
     }
 
     verifyEmail()
-  }, [router])
+  }, [router, t])
 
   // Listen for auth state changes
   useEffect(() => {
@@ -72,9 +74,9 @@ export default function VerifyEmailPage() {
       <div className="min-h-screen flex items-center justify-center container-spacing section-spacing">
         <Card className="w-full max-w-md shadow-sm">
           <CardHeader className="space-y-3 text-center">
-            <CardTitle className="text-3xl font-bold">Email wird bestätigt...</CardTitle>
+            <CardTitle className="text-3xl font-bold">{t('verifyTitle')}</CardTitle>
             <CardDescription className="text-base">
-              Einen Moment bitte
+              {t('verifyDescription')}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex justify-center py-8">
@@ -90,9 +92,9 @@ export default function VerifyEmailPage() {
       <div className="min-h-screen flex items-center justify-center container-spacing section-spacing">
         <Card className="w-full max-w-md shadow-sm">
           <CardHeader className="space-y-3 text-center">
-            <CardTitle className="text-3xl font-bold">Bestätigung fehlgeschlagen</CardTitle>
+            <CardTitle className="text-3xl font-bold">{t('verifyErrorTitle')}</CardTitle>
             <CardDescription className="text-base">
-              Es gab ein Problem bei der Email-Bestätigung
+              {t('verifyErrorDescription')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -103,11 +105,11 @@ export default function VerifyEmailPage() {
           <CardFooter className="flex flex-col space-y-3">
             <Link href="/login" className="w-full">
               <Button variant="outline" className="w-full">
-                Zur Anmeldung
+                {t('backToLogin')}
               </Button>
             </Link>
             <p className="text-sm text-muted-foreground text-center">
-              Probleme? Kontaktiere unseren Support
+              {t('contactSupport')}
             </p>
           </CardFooter>
         </Card>
@@ -120,21 +122,21 @@ export default function VerifyEmailPage() {
       <div className="min-h-screen flex items-center justify-center container-spacing section-spacing">
         <Card className="w-full max-w-md shadow-sm">
           <CardHeader className="space-y-3 text-center">
-            <CardTitle className="text-3xl font-bold">Email bestätigt!</CardTitle>
+            <CardTitle className="text-3xl font-bold">{t('verifySuccessTitle')}</CardTitle>
             <CardDescription className="text-base">
-              Dein Account wurde erfolgreich aktiviert
+              {t('verifySuccessDescription')}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <Alert>
               <AlertDescription className="text-center">
-                Du wirst automatisch zu deinen Einstellungen weitergeleitet...
+                {t('verifySuccessMessage')}
               </AlertDescription>
             </Alert>
           </CardContent>
           <CardFooter className="flex justify-center">
             <Link href="/settings">
-              <Button>Zu den Einstellungen</Button>
+              <Button>{t('toSettings')}</Button>
             </Link>
           </CardFooter>
         </Card>
@@ -146,24 +148,24 @@ export default function VerifyEmailPage() {
     <div className="min-h-screen flex items-center justify-center container-spacing section-spacing">
       <Card className="w-full max-w-md shadow-sm">
         <CardHeader className="space-y-3 text-center">
-          <CardTitle className="text-3xl font-bold">Bestätige deine Email</CardTitle>
+          <CardTitle className="text-3xl font-bold">{t('verifyPendingTitle')}</CardTitle>
           <CardDescription className="text-base">
-            Überprüfe dein Email-Postfach
+            {t('verifyPendingDescription')}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Alert>
             <AlertDescription className="text-center">
-              Bitte klicke auf den Link in der Email, die wir dir gesendet haben, um deinen Account zu aktivieren.
+              {t('verifyPendingMessage')}
             </AlertDescription>
           </Alert>
           <p className="text-sm text-muted-foreground text-center">
-            Email nicht erhalten? Überprüfe deinen Spam-Ordner.
+            {t('verifySpamNote')}
           </p>
         </CardContent>
         <CardFooter className="flex justify-center">
           <Link href="/login">
-            <Button variant="outline">Zurück zur Anmeldung</Button>
+            <Button variant="outline">{t('backToLoginOutline')}</Button>
           </Link>
         </CardFooter>
       </Card>

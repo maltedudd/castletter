@@ -1,24 +1,31 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { NextIntlClientProvider } from 'next-intl';
+import { getLocale, getMessages } from 'next-intl/server';
 import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
   title: "Castletter",
-  description: "Tägliche Newsletter zu deinen Lieblings-Podcasts",
+  description: "Daily newsletters for your favorite podcasts",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getLocale();
+  const messages = await getMessages();
+
   return (
-    <html lang="de" suppressHydrationWarning>
+    <html lang={locale} suppressHydrationWarning>
       <body className="antialiased flex flex-col min-h-screen">
-        <main className="flex-1 flex flex-col">
-          {children}
-        </main>
-        <Footer />
+        <NextIntlClientProvider messages={messages}>
+          <main className="flex-1 flex flex-col">
+            {children}
+          </main>
+          <Footer />
+        </NextIntlClientProvider>
       </body>
     </html>
   );

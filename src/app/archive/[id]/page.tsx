@@ -2,20 +2,13 @@ import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/server'
+import { getTranslations, getLocale } from 'next-intl/server'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 
 interface PageProps {
   params: Promise<{ id: string }>
-}
-
-function formatDate(dateString: string) {
-  return new Date(dateString).toLocaleDateString('de-DE', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  })
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -44,6 +37,8 @@ function BulletList({ items }: { items: string[] }) {
 export default async function ArchiveDetailPage({ params }: PageProps) {
   const { id } = await params
   const supabase = await createClient()
+  const t = await getTranslations('archive')
+  const locale = await getLocale()
 
   // Check auth
   const {
@@ -96,8 +91,16 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const newsletter = episode.episode_newsletters as any
 
-  const podcastTitle: string = sub?.title ?? 'Unbekannter Podcast'
+  const podcastTitle: string = sub?.title ?? t('unknownPodcast')
   const podcastCover: string | null = sub?.cover_image_url ?? null
+
+  function formatDate(dateString: string) {
+    return new Date(dateString).toLocaleDateString(locale === 'de' ? 'de-DE' : 'en-US', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    })
+  }
 
   return (
     <div className="min-h-screen section-spacing">
@@ -108,7 +111,7 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
             href="/archive"
             className="text-sm text-muted-foreground hover:text-primary transition-colors inline-block"
           >
-            &larr; Zurück zum Archiv
+            {t('backToArchive')}
           </Link>
         </div>
 
@@ -132,7 +135,7 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
             <h1 className="text-2xl font-bold leading-snug">{episode.title}</h1>
             {episode.newsletter_sent_at && (
               <Badge variant="secondary" className="mt-2">
-                Versendet am {formatDate(episode.newsletter_sent_at)}
+                {t('sentBadge', { date: formatDate(episode.newsletter_sent_at) })}
               </Badge>
             )}
           </div>
@@ -145,7 +148,7 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
           <div className="space-y-8">
             {/* Intro */}
             {newsletter.intro && (
-              <Section title="Zusammenfassung">
+              <Section title={t('sectionSummary')}>
                 <p className="text-muted-foreground leading-relaxed">{newsletter.intro}</p>
               </Section>
             )}
@@ -154,7 +157,7 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
             {newsletter.bullet_points && newsletter.bullet_points.length > 0 && (
               <>
                 <Separator />
-                <Section title="Hauptthemen">
+                <Section title={t('sectionTopics')}>
                   <BulletList items={newsletter.bullet_points} />
                 </Section>
               </>
@@ -164,7 +167,7 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
             {newsletter.key_takeaways && newsletter.key_takeaways.length > 0 && (
               <>
                 <Separator />
-                <Section title="Wichtige Aussagen">
+                <Section title={t('sectionTakeaways')}>
                   <BulletList items={newsletter.key_takeaways} />
                 </Section>
               </>
@@ -172,7 +175,7 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
           </div>
         ) : (
           <p className="text-muted-foreground">
-            Die Newsletter-Inhalte konnten nicht geladen werden.
+            {t('contentLoadError')}
           </p>
         )}
 
@@ -181,7 +184,7 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
           <div className="mt-10 pt-8 border-t">
             <Button asChild>
               <a href={episode.audio_url} target="_blank" rel="noopener noreferrer">
-                Episode anhören
+                {t('listenButton')}
               </a>
             </Button>
           </div>

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useTranslations } from 'next-intl'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,6 +18,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const router = useRouter()
   const supabase = createClient()
+  const t = useTranslations('auth')
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -30,14 +32,13 @@ export default function LoginPage() {
       })
 
       if (error) {
-        // Deutsche Fehlermeldungen
         if (error.message.includes('Invalid login credentials')) {
-          setError('Email oder Passwort falsch')
+          setError(t('errorInvalidCredentials'))
         } else if (error.message.includes('Email not confirmed')) {
-          setError('Bitte bestätige zuerst deine Email-Adresse')
+          setError(t('errorEmailNotConfirmed'))
         } else {
           console.error('Supabase auth error:', error.message, error)
-          setError(`Anmeldung fehlgeschlagen: ${error.message}`)
+          setError(t('errorLoginFailed', { message: error.message }))
         }
         setLoading(false)
         return
@@ -46,7 +47,7 @@ export default function LoginPage() {
       // Check email verification
       if (data.user && !data.user.email_confirmed_at) {
         await supabase.auth.signOut()
-        setError('Bitte bestätige zuerst deine Email-Adresse')
+        setError(t('errorEmailNotConfirmed'))
         setLoading(false)
         return
       }
@@ -55,7 +56,7 @@ export default function LoginPage() {
       router.push('/dashboard')
       router.refresh()
     } catch (err) {
-      setError('Ein unerwarteter Fehler ist aufgetreten')
+      setError(t('errorUnexpected'))
       setLoading(false)
     }
   }
@@ -64,9 +65,9 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center container-spacing section-spacing">
       <Card className="w-full max-w-md shadow-sm">
         <CardHeader className="space-y-3 text-center">
-          <CardTitle className="text-3xl font-bold">Willkommen zurück</CardTitle>
+          <CardTitle className="text-3xl font-bold">{t('loginTitle')}</CardTitle>
           <CardDescription className="text-base">
-            Melde dich an, um deine Podcast-Newsletter zu verwalten
+            {t('loginDescription')}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -79,12 +80,12 @@ export default function LoginPage() {
 
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium">
-                Email-Adresse
+                {t('emailLabel')}
               </Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="deine@email.de"
+                placeholder={t('emailPlaceholder')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -96,7 +97,7 @@ export default function LoginPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password" className="text-sm font-medium">
-                  Passwort
+                  {t('passwordLabel')}
                 </Label>
               </div>
               <Input
@@ -116,18 +117,18 @@ export default function LoginPage() {
               className="w-full h-11 mt-4"
               disabled={loading}
             >
-              {loading ? 'Anmeldung läuft...' : 'Anmelden'}
+              {loading ? t('loginButtonLoading') : t('loginButton')}
             </Button>
           </form>
         </CardContent>
         <CardFooter className="flex flex-col space-y-4">
           <div className="text-sm text-center text-muted-foreground">
-            Noch kein Account?{' '}
+            {t('noAccount')}{' '}
             <Link
               href="/register"
               className="font-medium text-primary hover:text-primary/80 transition-colors"
             >
-              Jetzt registrieren
+              {t('registerLink')}
             </Link>
           </div>
         </CardFooter>
