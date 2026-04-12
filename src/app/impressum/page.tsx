@@ -1,6 +1,11 @@
+import Link from 'next/link'
+
 export default function ImpressumPage() {
   return (
     <div className="min-h-screen container max-w-2xl mx-auto px-4 py-12">
+      <Link href="/" className="text-sm text-muted-foreground hover:text-primary transition-colors mb-6 inline-block">
+        ← Zur Startseite
+      </Link>
       <h1 className="text-3xl font-bold mb-8">Impressum</h1>
 
       <div className="prose prose-sm max-w-none space-y-6 text-sm leading-relaxed">
