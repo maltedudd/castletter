@@ -28,7 +28,7 @@ export function useAuth() {
         setLoading(false)
 
         if (event === 'SIGNED_OUT') {
-          router.push('/login')
+          router.push('/')
         }
       }
     )
@@ -40,7 +40,7 @@ export function useAuth() {
 
   const signOut = async () => {
     await supabase.auth.signOut()
-    router.push('/login')
+    router.push('/')
   }
 
   return {
