@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 
 const MAX_TRANSCRIPT_CHARS = 150_000 // ~150k chars ≈ safe for Claude context
 
@@ -25,7 +26,8 @@ export async function GET(request: NextRequest) {
   let failed = 0
 
   try {
-    // Fetch transcribed episodes that need newsletter generation
+    // Fetch recent transcribed episodes only. This prevents any stale backlog
+    // item from turning into a delayed newsletter when cron processing resumes.
     const { data: episodes, error: fetchError } = await supabase
       .from('episodes')
       .select(`
@@ -33,7 +35,8 @@ export async function GET(request: NextRequest) {
         podcast_subscriptions!inner(title)
       `)
       .eq('status', 'transcribed')
-      .order('published_at', { ascending: true })
+      .gte('published_at', getRecentEpisodeCutoff())
+      .order('published_at', { ascending: false })
       .limit(2) // Max 2 per run (60s timeout on Hobby plan)
 
     if (fetchError || !episodes) {

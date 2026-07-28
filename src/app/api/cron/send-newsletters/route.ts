@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { generateEmailHTML, generateEmailPlainText } from '@/lib/email/template'
+import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 
 const MAX_USERS_PER_RUN = 100
 const FROM_EMAIL = process.env.FROM_EMAIL || 'Castletter <newsletter@castletter.app>'
@@ -99,7 +100,8 @@ async function sendUserNewsletter(
   const subscriptionIds = subscriptions.map((s) => s.id)
   const subscriptionMap = new Map(subscriptions.map((s) => [s.id, s.title]))
 
-  // Get all newsletter_ready episodes for this user's subscriptions
+  // Get recent newsletter_ready episodes for this user's subscriptions.
+  // This prevents old backlog items from being mailed when cron processing resumes.
   const { data: episodes } = await supabase
     .from('episodes')
     .select(`
@@ -107,6 +109,7 @@ async function sendUserNewsletter(
       episode_newsletters!inner(intro, bullet_points, key_takeaways, action_items, quotes, speakers, reflection)
     `)
     .eq('status', 'newsletter_ready')
+    .gte('published_at', getRecentEpisodeCutoff())
     .in('subscription_id', subscriptionIds)
 
   if (!episodes || episodes.length === 0) return false

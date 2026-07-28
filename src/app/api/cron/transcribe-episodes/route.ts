@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 import OpenAI from 'openai'
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100 MB
@@ -25,12 +26,15 @@ export async function GET(request: NextRequest) {
   let failed = 0
 
   try {
-    // Fetch pending episodes
+    // Fetch recent pending episodes only. The date filter intentionally skips
+    // the old April→July backlog after cron restoration so a stale timeout
+    // cannot starve fresh daily episodes.
     const { data: episodes, error: fetchError } = await supabase
       .from('episodes')
       .select('id, audio_url, title, subscription_id, transcript')
       .eq('status', 'pending_transcription')
-      .order('published_at', { ascending: true })
+      .gte('published_at', getRecentEpisodeCutoff())
+      .order('published_at', { ascending: false })
       .limit(BATCH_SIZE)
 
     if (fetchError || !episodes) {
