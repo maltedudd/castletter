@@ -1,13 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
+import {
+  WHISPER_MAX_SIZE,
+  isTooLargeForWhisper,
+  buildAcceptedResponse,
+  buildNoPendingResponse,
+} from '@/lib/cron/transcribe-ack.mjs'
 import OpenAI from 'openai'
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100 MB
-const WHISPER_MAX_SIZE = 25 * 1024 * 1024 // 25 MB (Whisper API limit)
-const TRUNCATE_SIZE = 10 * 1024 * 1024 // 10 MB (fits within 60s timeout)
-const BATCH_SIZE = 1 // Process 1 episode per run (Hobby plan: 60s limit)
-
+// maxDuration bounds the whole function (fast ack + background after() work). cron-job.org
+// itself only ever sees the fast ack below — its 30s timeout no longer applies to the
+// actual transcription, but Vercel still tears the function down after maxDuration.
 export const maxDuration = 60 // Vercel Hobby plan
 
 export async function GET(request: NextRequest) {
@@ -20,42 +24,62 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createAdminClient()
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
-  let transcribed = 0
-  let failed = 0
 
   try {
-    // Fetch recent pending episodes only. The date filter intentionally skips
+    // Fetch newest recent pending episode only. The date filter intentionally skips
     // the old April→July backlog after cron restoration so a stale timeout
     // cannot starve fresh daily episodes.
-    const { data: episodes, error: fetchError } = await supabase
+    const { data: candidates, error: fetchError } = await supabase
       .from('episodes')
       .select('id, audio_url, title, subscription_id, transcript')
       .eq('status', 'pending_transcription')
       .gte('published_at', getRecentEpisodeCutoff())
       .order('published_at', { ascending: false })
-      .limit(BATCH_SIZE)
+      .limit(1)
 
-    if (fetchError || !episodes) {
+    if (fetchError) {
       return NextResponse.json(
-        { error: 'Failed to fetch episodes', details: fetchError?.message },
+        { error: 'Failed to fetch episodes', details: fetchError.message },
         { status: 500 }
       )
     }
 
-    if (episodes.length === 0) {
-      return NextResponse.json({ success: true, transcribed: 0, failed: 0, message: 'No pending episodes' })
+    const candidate = candidates?.[0]
+    if (!candidate) {
+      return NextResponse.json(buildNoPendingResponse())
     }
 
-    // Process one at a time (60s timeout on Hobby plan)
-    for (const ep of episodes) {
-      const result = await transcribeEpisode(supabase, openai, ep)
-      if (result.success) transcribed++
-      else failed++
+    // Claim before ack: status-guarded update so a parallel/overlapping cron run can't
+    // claim the same episode. If the row didn't match (already claimed elsewhere),
+    // `claimed` comes back empty and we ack "nothing to do" instead of double-processing.
+    const { data: claimed, error: claimError } = await supabase
+      .from('episodes')
+      .update({ status: 'transcribing' })
+      .eq('id', candidate.id)
+      .eq('status', 'pending_transcription')
+      .select('id, audio_url, title, subscription_id, transcript')
+
+    if (claimError) {
+      return NextResponse.json(
+        { error: 'Failed to claim episode', details: claimError.message },
+        { status: 500 }
+      )
     }
 
-    return NextResponse.json({ success: true, transcribed, failed })
+    const episode = claimed?.[0]
+    if (!episode) {
+      return NextResponse.json(buildNoPendingResponse())
+    }
+
+    // Response semantics: this ack means "work accepted", not "work finished". The full
+    // download + Whisper + DB update continues below via after() within the function's
+    // remaining maxDuration budget, well past when this response has already been sent.
+    after(async () => {
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+      await transcribeEpisode(supabase, openai, episode)
+    })
+
+    return NextResponse.json(buildAcceptedResponse(episode.id), { status: 202 })
   } catch (err) {
     return NextResponse.json(
       { error: 'Transcription cron failed', details: err instanceof Error ? err.message : 'Unknown' },
@@ -72,6 +96,11 @@ interface Episode {
   transcript: string | null
 }
 
+/**
+ * Runs in the background (via after()). The episode has already been claimed
+ * (status flipped pending_transcription -> transcribing) by the caller, so this
+ * never needs to guess whether it's allowed to start work.
+ */
 async function transcribeEpisode(
   supabase: ReturnType<typeof createAdminClient>,
   openai: OpenAI,
@@ -86,16 +115,12 @@ async function transcribeEpisode(
     return { success: true }
   }
 
-  // Mark as transcribing
-  await supabase
-    .from('episodes')
-    .update({ status: 'transcribing' })
-    .eq('id', episode.id)
-
   try {
-    // Download audio with size check
+    // Download audio. Timeout is generous relative to the old 20s cron-facing budget
+    // because this now runs after the response was already sent, inside the
+    // function's remaining maxDuration=60 window rather than cron-job.org's 30s one.
     const response = await fetch(episode.audio_url, {
-      signal: AbortSignal.timeout(20_000), // 20s download timeout (60s total budget)
+      signal: AbortSignal.timeout(45_000),
     })
 
     if (!response.ok) {
@@ -103,32 +128,28 @@ async function transcribeEpisode(
     }
 
     const contentLength = Number(response.headers.get('content-length') || 0)
-    if (contentLength > MAX_FILE_SIZE) {
-      throw new PermanentError(`Episode zu groß zum Transkribieren (${Math.round(contentLength / 1024 / 1024)} MB, Max: 500 MB)`)
+    if (isTooLargeForWhisper(contentLength)) {
+      throw new PermanentError(
+        `Episode zu groß für Whisper (${Math.round(contentLength / 1024 / 1024)} MB, Max: ${Math.round(WHISPER_MAX_SIZE / 1024 / 1024)} MB). Kein Teiltranskript – Chunking ist ein separates Ticket.`
+      )
     }
 
-    // Read the audio into a buffer
+    // Read the full audio into a buffer. No truncation: either it fits Whisper's
+    // limit and gets transcribed completely, or it's honestly marked failed.
     const audioBuffer = Buffer.from(await response.arrayBuffer())
 
-    if (audioBuffer.length > MAX_FILE_SIZE) {
-      throw new PermanentError(`Episode zu groß zum Transkribieren (${Math.round(audioBuffer.length / 1024 / 1024)} MB, Max: 500 MB)`)
+    if (isTooLargeForWhisper(audioBuffer.length)) {
+      throw new PermanentError(
+        `Episode zu groß für Whisper (${Math.round(audioBuffer.length / 1024 / 1024)} MB, Max: ${Math.round(WHISPER_MAX_SIZE / 1024 / 1024)} MB). Kein Teiltranskript – Chunking ist ein separates Ticket.`
+      )
     }
 
     // Determine file extension from URL or content-type
     const ext = getAudioExtension(episode.audio_url, response.headers.get('content-type'))
     const contentType = response.headers.get('content-type') || 'audio/mpeg'
 
-    // Truncate to fit within 60s function timeout
-    // 10MB keeps download + Whisper API within budget
-    let whisperBuffer = audioBuffer
-    let isPartial = false
-    if (audioBuffer.length > TRUNCATE_SIZE) {
-      whisperBuffer = audioBuffer.subarray(0, TRUNCATE_SIZE)
-      isPartial = true
-    }
-
-    // Create a File object for OpenAI SDK
-    const file = new File([whisperBuffer], `episode.${ext}`, {
+    // Create a File object for OpenAI SDK from the complete audio buffer
+    const file = new File([audioBuffer], `episode.${ext}`, {
       type: contentType,
     })
 
@@ -139,24 +160,19 @@ async function transcribeEpisode(
       response_format: 'text',
     })
 
-    let transcript = typeof transcription === 'string' ? transcription : String(transcription)
+    const transcript = typeof transcription === 'string' ? transcription : String(transcription)
 
     if (!transcript || transcript.trim().length === 0) {
       throw new PermanentError('Keine Sprache erkannt – die Episode enthält möglicherweise nur Musik')
     }
 
-    if (isPartial) {
-      const pctTranscribed = Math.round((whisperBuffer.length / audioBuffer.length) * 100)
-      transcript += `\n\n[Hinweis: Transkript enthält ca. ${pctTranscribed}% der Episode (${Math.round(audioBuffer.length / 1024 / 1024)} MB Original, ${Math.round(whisperBuffer.length / 1024 / 1024)} MB transkribiert)]`
-    }
-
-    // Save transcript
+    // Save full transcript
     await supabase
       .from('episodes')
       .update({
         status: 'transcribed',
         transcript,
-        error_message: isPartial ? 'Teiltranskript (Audio > 25MB)' : null,
+        error_message: null,
       })
       .eq('id', episode.id)
 
