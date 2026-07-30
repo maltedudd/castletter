@@ -93,3 +93,58 @@ export function isStaleTranscribingRow({ errorMessage, createdAt }, now = new Da
   }
   return isStaleTranscribing(createdAt, now)
 }
+
+/**
+ * Groups stale rows by the exact `error_message` marker read at select time, so the reset
+ * can run as a true compare-and-swap per group instead of a single id+status batch update.
+ *
+ * Why this matters: two overlapping cron runs can both select the same orphaned row before
+ * either writes. If run A resets it and immediately reclaims it with a fresh marker, an
+ * id+status-only update from run B still matches — status is 'transcribing' again — and
+ * wipes out A's fresh claim out from under its in-flight Whisper job (ABA race: both runs
+ * read the same old marker, A swaps it for a new one, B's write lands anyway because it
+ * never checked the marker had changed). Pinning `error_message = <that exact marker>`
+ * (`IS NULL` for legacy unmarked rows) in the WHERE clause closes that window: once A's
+ * write changes the marker, B's compare-and-swap simply no longer matches.
+ */
+export function groupStaleRowsForReset(rows) {
+  const groups = []
+  for (const { id, errorMessage } of rows) {
+    const marker = errorMessage ?? null
+    let group = groups.find((g) => g.errorMessage === marker)
+    if (!group) {
+      group = { errorMessage: marker, ids: [] }
+      groups.push(group)
+    }
+    group.ids.push(id)
+  }
+  return groups
+}
+
+/**
+ * Executes the stale-reset compare-and-swap described above against a Supabase-style query
+ * builder (`from().update().in().eq().is().select()`). Takes the client as a parameter
+ * rather than importing one so it can be exercised against a fake in tests without a real
+ * database.
+ */
+export async function resetStaleTranscribingRows(supabase, staleRows, resetMessage) {
+  let staleReset = 0
+  for (const group of groupStaleRowsForReset(staleRows)) {
+    let query = supabase
+      .from('episodes')
+      .update({ status: 'pending_transcription', error_message: resetMessage })
+      .in('id', group.ids)
+      .eq('status', 'transcribing')
+
+    query = group.errorMessage === null
+      ? query.is('error_message', null)
+      : query.eq('error_message', group.errorMessage)
+
+    const { data, error } = await query.select('id')
+    if (error) {
+      return { staleReset, error }
+    }
+    staleReset += data?.length ?? 0
+  }
+  return { staleReset, error: null }
+}

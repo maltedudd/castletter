@@ -8,6 +8,7 @@ import {
   buildNoPendingResponse,
   buildClaimMarker,
   isStaleTranscribingRow,
+  resetStaleTranscribingRows,
 } from '@/lib/cron/transcribe-ack.mjs'
 import OpenAI from 'openai'
 
@@ -50,21 +51,21 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const staleIds = (transcribingRows ?? [])
+    const staleRows = (transcribingRows ?? [])
       .filter((row) => isStaleTranscribingRow({ errorMessage: row.error_message, createdAt: row.created_at }))
-      .map((row) => row.id)
+      .map((row) => ({ id: row.id, errorMessage: row.error_message }))
 
+    // Reset as a compare-and-swap on the exact marker read above (see
+    // resetStaleTranscribingRows), not just id+status. Two overlapping cron runs can both
+    // read the same orphaned row before either writes; an id+status-only update would let a
+    // later run wipe out an earlier run's fresh reclaim (ABA race).
     let staleReset = 0
-    if (staleIds.length > 0) {
-      const { data: staleResetRows, error: staleResetError } = await supabase
-        .from('episodes')
-        .update({
-          status: 'pending_transcription',
-          error_message: 'Automatischer Reset: Transkriptions-Lease abgelaufen (verwaiste transcribing-Episode)',
-        })
-        .in('id', staleIds)
-        .eq('status', 'transcribing')
-        .select('id')
+    if (staleRows.length > 0) {
+      const { staleReset: resetCount, error: staleResetError } = await resetStaleTranscribingRows(
+        supabase,
+        staleRows,
+        'Automatischer Reset: Transkriptions-Lease abgelaufen (verwaiste transcribing-Episode)'
+      )
 
       if (staleResetError) {
         return NextResponse.json(
@@ -73,7 +74,7 @@ export async function GET(request: NextRequest) {
         )
       }
 
-      staleReset = staleResetRows?.length ?? 0
+      staleReset = resetCount
     }
 
     // Fetch newest recent pending episode only. The date filter intentionally skips

@@ -11,6 +11,8 @@ import {
   buildClaimMarker,
   parseClaimMarker,
   isStaleTranscribingRow,
+  groupStaleRowsForReset,
+  resetStaleTranscribingRows,
 } from '../../src/lib/cron/transcribe-ack.mjs'
 
 test('flags audio over the 25MB Whisper limit without ever suggesting truncation', () => {
@@ -132,4 +134,153 @@ test('a legacy row with no marker is not reclaimed while created_at is still fre
   const now = new Date('2026-07-30T12:00:00.000Z')
   const freshCreatedAt = new Date(now.getTime() - 1000).toISOString()
   assert.equal(isStaleTranscribingRow({ errorMessage: undefined, createdAt: freshCreatedAt }, now), false)
+})
+
+// groupStaleRowsForReset / resetStaleTranscribingRows implement the reset as a
+// compare-and-swap: the update's WHERE clause must pin the exact error_message marker that
+// was read when a row was judged stale, not just id+status. Without that, two overlapping
+// cron runs that both read the same stale marker can race — run A resets and reclaims with
+// a fresh marker, then run B's id+status-only update still matches (status is 'transcribing'
+// again) and wipes out A's fresh claim (ABA race).
+
+test('groupStaleRowsForReset groups ids sharing the exact same marker together', () => {
+  const rows = [
+    { id: 'ep-1', errorMessage: 'Transkription gestartet: 2026-07-30T10:00:00.000Z' },
+    { id: 'ep-2', errorMessage: 'Transkription gestartet: 2026-07-30T10:00:00.000Z' },
+    { id: 'ep-3', errorMessage: 'Transkription gestartet: 2026-07-30T09:00:00.000Z' },
+  ]
+  const groups = groupStaleRowsForReset(rows)
+  assert.equal(groups.length, 2)
+  const byMarker = new Map(groups.map((g) => [g.errorMessage, g.ids]))
+  assert.deepEqual(byMarker.get('Transkription gestartet: 2026-07-30T10:00:00.000Z'), ['ep-1', 'ep-2'])
+  assert.deepEqual(byMarker.get('Transkription gestartet: 2026-07-30T09:00:00.000Z'), ['ep-3'])
+})
+
+test('groupStaleRowsForReset puts legacy null-marker rows in their own group', () => {
+  const rows = [
+    { id: 'ep-1', errorMessage: null },
+    { id: 'ep-2', errorMessage: undefined },
+    { id: 'ep-3', errorMessage: 'Transkription gestartet: 2026-07-30T09:00:00.000Z' },
+  ]
+  const groups = groupStaleRowsForReset(rows)
+  assert.equal(groups.length, 2)
+  const nullGroup = groups.find((g) => g.errorMessage === null)
+  assert.deepEqual(nullGroup.ids.sort(), ['ep-1', 'ep-2'])
+})
+
+/**
+ * Minimal in-memory stand-in for the subset of the Supabase query builder that
+ * resetStaleTranscribingRows() actually uses (from/update/in/eq/is/select), so the ABA
+ * race can be reproduced deterministically without a real database. Filters accumulate and
+ * are applied on `.select()`, mirroring the real client's "await the built query" shape.
+ */
+function makeFakeEpisodesTable(initialRows) {
+  const rows = initialRows.map((row) => ({ ...row }))
+  return {
+    rows,
+    from() {
+      return {
+        update(patch) {
+          const filters = []
+          const builder = {
+            eq(column, value) {
+              filters.push((row) => row[column] === value)
+              return builder
+            },
+            in(column, values) {
+              filters.push((row) => values.includes(row[column]))
+              return builder
+            },
+            is(column, value) {
+              filters.push((row) => row[column] === value)
+              return builder
+            },
+            async select() {
+              const matched = rows.filter((row) => filters.every((matches) => matches(row)))
+              for (const row of matched) Object.assign(row, patch)
+              return { data: matched.map((row) => ({ id: row.id })), error: null }
+            },
+          }
+          return builder
+        },
+      }
+    },
+  }
+}
+
+test('resetStaleTranscribingRows never resurrects a concurrent run\'s fresh claim (ABA race)', async () => {
+  const now = new Date('2026-07-30T12:00:00.000Z')
+  const staleMarker = buildClaimMarker(new Date(now.getTime() - TRANSCRIBING_LEASE_MS - 1))
+
+  const table = makeFakeEpisodesTable([
+    { id: 'ep-1', status: 'transcribing', error_message: staleMarker },
+  ])
+
+  // Both run A and run B read the same stale snapshot before either writes.
+  const staleRowsReadByA = [{ id: 'ep-1', errorMessage: staleMarker }]
+  const staleRowsReadByB = [{ id: 'ep-1', errorMessage: staleMarker }]
+  const resetMessage = 'Automatischer Reset: Transkriptions-Lease abgelaufen (verwaiste transcribing-Episode)'
+
+  // Run A resets ep-1, then immediately reclaims it with a fresh marker.
+  const resultA = await resetStaleTranscribingRows(table, staleRowsReadByA, resetMessage)
+  assert.equal(resultA.staleReset, 1)
+  assert.equal(resultA.error, null)
+
+  const freshMarker = buildClaimMarker(now)
+  table.rows[0].status = 'transcribing'
+  table.rows[0].error_message = freshMarker
+
+  // Run B, unaware A already reclaimed it, applies its own reset built from the stale
+  // snapshot it read earlier. The CAS on error_message must stop this from matching.
+  const resultB = await resetStaleTranscribingRows(table, staleRowsReadByB, resetMessage)
+  assert.equal(resultB.staleReset, 0)
+  assert.equal(resultB.error, null)
+
+  // A's fresh claim must survive untouched.
+  assert.equal(table.rows[0].status, 'transcribing')
+  assert.equal(table.rows[0].error_message, freshMarker)
+})
+
+test('resetStaleTranscribingRows resets a legacy null-marker row using IS NULL, not id+status alone', async () => {
+  const table = makeFakeEpisodesTable([{ id: 'ep-1', status: 'transcribing', error_message: null }])
+  const resetMessage = 'Automatischer Reset: Transkriptions-Lease abgelaufen (verwaiste transcribing-Episode)'
+
+  const result = await resetStaleTranscribingRows(table, [{ id: 'ep-1', errorMessage: null }], resetMessage)
+
+  assert.equal(result.staleReset, 1)
+  assert.equal(table.rows[0].status, 'pending_transcription')
+  assert.equal(table.rows[0].error_message, resetMessage)
+})
+
+test('resetStaleTranscribingRows surfaces the first update error without throwing', async () => {
+  const failingClient = {
+    from() {
+      return {
+        update() {
+          return {
+            in() {
+              return this
+            },
+            eq() {
+              return this
+            },
+            is() {
+              return this
+            },
+            async select() {
+              return { data: null, error: { message: 'boom' } }
+            },
+          }
+        },
+      }
+    },
+  }
+
+  const result = await resetStaleTranscribingRows(
+    failingClient,
+    [{ id: 'ep-1', errorMessage: null }],
+    'Automatischer Reset'
+  )
+  assert.equal(result.staleReset, 0)
+  assert.equal(result.error.message, 'boom')
 })
