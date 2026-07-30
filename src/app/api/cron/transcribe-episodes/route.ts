@@ -6,6 +6,9 @@ import {
   isTooLargeForWhisper,
   buildAcceptedResponse,
   buildNoPendingResponse,
+  buildClaimMarker,
+  isStaleTranscribingRow,
+  resetStaleTranscribingRows,
 } from '@/lib/cron/transcribe-ack.mjs'
 import OpenAI from 'openai'
 
@@ -26,6 +29,54 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
 
   try {
+    // Recover recent episodes orphaned in `transcribing` by a run that claimed them but
+    // never finished (crash, redeploy, OOM before after() completed). Bounded by the same
+    // recent-episode window as candidate selection so the April→July backlog is never
+    // touched. There is no dedicated claim-timestamp column, so each row's claim marker
+    // (stored in error_message at claim time below) is parsed and compared against the
+    // lease; only rows with no parseable marker (claimed before this marker existed) fall
+    // back to created_at for one-time legacy recovery. A fresh marker always wins over
+    // created_at, so a still-in-flight claim is never reclaimed out from under a
+    // concurrent Whisper job.
+    const { data: transcribingRows, error: transcribingFetchError } = await supabase
+      .from('episodes')
+      .select('id, created_at, error_message')
+      .eq('status', 'transcribing')
+      .gte('published_at', getRecentEpisodeCutoff())
+
+    if (transcribingFetchError) {
+      return NextResponse.json(
+        { error: 'Failed to fetch transcribing episodes', details: transcribingFetchError.message },
+        { status: 500 }
+      )
+    }
+
+    const staleRows = (transcribingRows ?? [])
+      .filter((row) => isStaleTranscribingRow({ errorMessage: row.error_message, createdAt: row.created_at }))
+      .map((row) => ({ id: row.id, errorMessage: row.error_message }))
+
+    // Reset as a compare-and-swap on the exact marker read above (see
+    // resetStaleTranscribingRows), not just id+status. Two overlapping cron runs can both
+    // read the same orphaned row before either writes; an id+status-only update would let a
+    // later run wipe out an earlier run's fresh reclaim (ABA race).
+    let staleReset = 0
+    if (staleRows.length > 0) {
+      const { staleReset: resetCount, error: staleResetError } = await resetStaleTranscribingRows(
+        supabase,
+        staleRows,
+        'Automatischer Reset: Transkriptions-Lease abgelaufen (verwaiste transcribing-Episode)'
+      )
+
+      if (staleResetError) {
+        return NextResponse.json(
+          { error: 'Failed to reset stale transcribing episodes', details: staleResetError.message },
+          { status: 500 }
+        )
+      }
+
+      staleReset = resetCount
+    }
+
     // Fetch newest recent pending episode only. The date filter intentionally skips
     // the old April→July backlog after cron restoration so a stale timeout
     // cannot starve fresh daily episodes.
@@ -46,7 +97,7 @@ export async function GET(request: NextRequest) {
 
     const candidate = candidates?.[0]
     if (!candidate) {
-      return NextResponse.json(buildNoPendingResponse())
+      return NextResponse.json(buildNoPendingResponse(staleReset))
     }
 
     // Claim before ack: status-guarded update so a parallel/overlapping cron run can't
@@ -54,7 +105,7 @@ export async function GET(request: NextRequest) {
     // `claimed` comes back empty and we ack "nothing to do" instead of double-processing.
     const { data: claimed, error: claimError } = await supabase
       .from('episodes')
-      .update({ status: 'transcribing' })
+      .update({ status: 'transcribing', error_message: buildClaimMarker() })
       .eq('id', candidate.id)
       .eq('status', 'pending_transcription')
       .select('id, audio_url, title, subscription_id, transcript')
@@ -68,7 +119,7 @@ export async function GET(request: NextRequest) {
 
     const episode = claimed?.[0]
     if (!episode) {
-      return NextResponse.json(buildNoPendingResponse())
+      return NextResponse.json(buildNoPendingResponse(staleReset))
     }
 
     // Response semantics: this ack means "work accepted", not "work finished". The full
@@ -79,7 +130,7 @@ export async function GET(request: NextRequest) {
       await transcribeEpisode(supabase, openai, episode)
     })
 
-    return NextResponse.json(buildAcceptedResponse(episode.id), { status: 202 })
+    return NextResponse.json(buildAcceptedResponse(episode.id, staleReset), { status: 202 })
   } catch (err) {
     return NextResponse.json(
       { error: 'Transcription cron failed', details: err instanceof Error ? err.message : 'Unknown' },
