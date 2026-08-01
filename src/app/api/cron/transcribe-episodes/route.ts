@@ -2,8 +2,9 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 import {
-  WHISPER_MAX_SIZE,
-  isTooLargeForWhisper,
+  buildAudioChunkRanges,
+  isTooLargeForSingleTranscriptionUpload,
+  joinTranscriptChunks,
   buildAcceptedResponse,
   buildNoPendingResponse,
   buildClaimMarker,
@@ -179,39 +180,16 @@ async function transcribeEpisode(
     }
 
     const contentLength = Number(response.headers.get('content-length') || 0)
-    if (isTooLargeForWhisper(contentLength)) {
-      throw new PermanentError(
-        `Episode zu groß für Whisper (${Math.round(contentLength / 1024 / 1024)} MB, Max: ${Math.round(WHISPER_MAX_SIZE / 1024 / 1024)} MB). Kein Teiltranskript – Chunking ist ein separates Ticket.`
-      )
-    }
-
-    // Read the full audio into a buffer. No truncation: either it fits Whisper's
-    // limit and gets transcribed completely, or it's honestly marked failed.
-    const audioBuffer = Buffer.from(await response.arrayBuffer())
-
-    if (isTooLargeForWhisper(audioBuffer.length)) {
-      throw new PermanentError(
-        `Episode zu groß für Whisper (${Math.round(audioBuffer.length / 1024 / 1024)} MB, Max: ${Math.round(WHISPER_MAX_SIZE / 1024 / 1024)} MB). Kein Teiltranskript – Chunking ist ein separates Ticket.`
-      )
-    }
-
-    // Determine file extension from URL or content-type
-    const ext = getAudioExtension(episode.audio_url, response.headers.get('content-type'))
     const contentType = response.headers.get('content-type') || 'audio/mpeg'
+    const ext = getAudioExtension(episode.audio_url, contentType)
 
-    // Create a File object for OpenAI SDK from the complete audio buffer
-    const file = new File([audioBuffer], `episode.${ext}`, {
-      type: contentType,
-    })
-
-    // Send to Whisper API
-    const transcription = await openai.audio.transcriptions.create({
-      file,
-      model: 'whisper-1',
-      response_format: 'text',
-    })
-
-    const transcript = typeof transcription === 'string' ? transcription : String(transcription)
+    let transcript: string
+    if (isTooLargeForSingleTranscriptionUpload(contentLength)) {
+      transcript = await transcribeAudioRanges(openai, episode.audio_url, contentLength, contentType, ext)
+    } else {
+      const audioBuffer = Buffer.from(await response.arrayBuffer())
+      transcript = await transcribeAudioBuffer(openai, audioBuffer, contentType, ext)
+    }
 
     if (!transcript || transcript.trim().length === 0) {
       throw new PermanentError('Keine Sprache erkannt – die Episode enthält möglicherweise nur Musik')
@@ -254,6 +232,90 @@ async function transcribeEpisode(
 
     return { success: false }
   }
+}
+
+async function transcribeAudioBuffer(
+  openai: OpenAI,
+  audioBuffer: Buffer,
+  contentType: string,
+  ext: string
+): Promise<string> {
+  if (!isTooLargeForSingleTranscriptionUpload(audioBuffer.length)) {
+    return transcribeSingleChunk(openai, audioBuffer, contentType, ext, 'episode')
+  }
+
+  const ranges = buildAudioChunkRanges(audioBuffer.length)
+  const transcripts: string[] = []
+  for (const range of ranges) {
+    const chunk = audioBuffer.subarray(range.start, range.end + 1)
+    transcripts.push(await transcribeSingleChunk(openai, chunk, contentType, ext, `episode-part-${range.index + 1}-of-${range.total}`))
+  }
+  return joinTranscriptChunks(transcripts)
+}
+
+async function transcribeAudioRanges(
+  openai: OpenAI,
+  audioUrl: string,
+  totalBytes: number,
+  contentType: string,
+  ext: string
+): Promise<string> {
+  const ranges = buildAudioChunkRanges(totalBytes)
+  const transcripts: string[] = []
+
+  for (const range of ranges) {
+    const chunkResponse = await fetch(audioUrl, {
+      headers: { Range: `bytes=${range.start}-${range.end}` },
+      signal: AbortSignal.timeout(45_000),
+    })
+
+    if (chunkResponse.status !== 206) {
+      throw new PermanentError(
+        `Audio-Server unterstützt kein zuverlässiges Range-Chunking (HTTP ${chunkResponse.status}). Keine Teiltranskription gespeichert.`
+      )
+    }
+
+    const chunkBuffer = Buffer.from(await chunkResponse.arrayBuffer())
+    if (isTooLargeForSingleTranscriptionUpload(chunkBuffer.length)) {
+      throw new PermanentError(
+        `Transkriptions-Chunk ${range.index + 1}/${range.total} ist zu groß (${Math.round(chunkBuffer.length / 1024 / 1024)} MB). Keine Teiltranskription gespeichert.`
+      )
+    }
+
+    transcripts.push(
+      await transcribeSingleChunk(openai, chunkBuffer, contentType, ext, `episode-part-${range.index + 1}-of-${range.total}`)
+    )
+  }
+
+  return joinTranscriptChunks(transcripts)
+}
+
+async function transcribeSingleChunk(
+  openai: OpenAI,
+  audioBuffer: Buffer,
+  contentType: string,
+  ext: string,
+  basename: string
+): Promise<string> {
+  const arrayBuffer = audioBuffer.buffer.slice(
+    audioBuffer.byteOffset,
+    audioBuffer.byteOffset + audioBuffer.byteLength
+  ) as ArrayBuffer
+  const file = new File([arrayBuffer], `${basename}.${ext}`, { type: contentType })
+  const transcription = await openai.audio.transcriptions.create({
+    file,
+    model: 'gpt-transcribe',
+  })
+  return extractTranscriptText(transcription)
+}
+
+function extractTranscriptText(transcription: unknown): string {
+  if (typeof transcription === 'string') return transcription
+  if (transcription && typeof transcription === 'object' && 'text' in transcription) {
+    const text = (transcription as { text?: unknown }).text
+    return typeof text === 'string' ? text : String(text ?? '')
+  }
+  return String(transcription ?? '')
 }
 
 /** Determine audio file extension from URL or content-type */

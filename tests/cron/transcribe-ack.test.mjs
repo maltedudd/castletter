@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  WHISPER_MAX_SIZE,
-  isTooLargeForWhisper,
+  OPENAI_TRANSCRIPTION_MAX_SIZE,
+  TRANSCRIPTION_CHUNK_TARGET_SIZE,
+  isTooLargeForSingleTranscriptionUpload,
+  buildAudioChunkRanges,
+  joinTranscriptChunks,
   buildAcceptedResponse,
   buildNoPendingResponse,
   TRANSCRIBING_LEASE_MS,
@@ -15,11 +18,47 @@ import {
   resetStaleTranscribingRows,
 } from '../../src/lib/cron/transcribe-ack.mjs'
 
-test('flags audio over the 25MB Whisper limit without ever suggesting truncation', () => {
-  assert.equal(isTooLargeForWhisper(WHISPER_MAX_SIZE), false)
-  assert.equal(isTooLargeForWhisper(WHISPER_MAX_SIZE + 1), true)
-  assert.equal(isTooLargeForWhisper(15 * 1024 * 1024), false) // typical daily episode size
-  assert.equal(isTooLargeForWhisper(undefined), false)
+test('detects whether audio fits a single OpenAI transcription upload', () => {
+  assert.equal(isTooLargeForSingleTranscriptionUpload(OPENAI_TRANSCRIPTION_MAX_SIZE), false)
+  assert.equal(isTooLargeForSingleTranscriptionUpload(OPENAI_TRANSCRIPTION_MAX_SIZE + 1), true)
+  assert.equal(isTooLargeForSingleTranscriptionUpload(15 * 1024 * 1024), false) // typical daily episode size
+  assert.equal(isTooLargeForSingleTranscriptionUpload(undefined), false)
+})
+
+test('buildAudioChunkRanges keeps small audio as one complete chunk', () => {
+  assert.deepEqual(buildAudioChunkRanges(15 * 1024 * 1024), [
+    { start: 0, end: 15 * 1024 * 1024 - 1, index: 0, total: 1 },
+  ])
+})
+
+test('buildAudioChunkRanges splits large audio into ordered chunks below the upload limit', () => {
+  const totalBytes = TRANSCRIPTION_CHUNK_TARGET_SIZE * 2 + 123
+  const ranges = buildAudioChunkRanges(totalBytes)
+
+  assert.equal(ranges.length, 3)
+  assert.deepEqual(ranges[0], { start: 0, end: TRANSCRIPTION_CHUNK_TARGET_SIZE - 1, index: 0, total: 3 })
+  assert.deepEqual(ranges[1], {
+    start: TRANSCRIPTION_CHUNK_TARGET_SIZE,
+    end: TRANSCRIPTION_CHUNK_TARGET_SIZE * 2 - 1,
+    index: 1,
+    total: 3,
+  })
+  assert.deepEqual(ranges[2], {
+    start: TRANSCRIPTION_CHUNK_TARGET_SIZE * 2,
+    end: totalBytes - 1,
+    index: 2,
+    total: 3,
+  })
+  assert.ok(ranges.every((range) => range.end - range.start + 1 <= OPENAI_TRANSCRIPTION_MAX_SIZE))
+})
+
+test('buildAudioChunkRanges rejects unknown or invalid lengths instead of creating partial transcripts', () => {
+  assert.throws(() => buildAudioChunkRanges(0), /Ungültige Audio-Größe/)
+  assert.throws(() => buildAudioChunkRanges(Number.NaN), /Ungültige Audio-Größe/)
+})
+
+test('joinTranscriptChunks preserves chunk order and skips empty model output', () => {
+  assert.equal(joinTranscriptChunks([' erster Teil ', '', 'zweiter Teil']), 'erster Teil\n\nzweiter Teil')
 })
 
 test('accepted response acks the claim without claiming the transcript is done', () => {

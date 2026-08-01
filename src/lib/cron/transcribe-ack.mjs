@@ -1,14 +1,37 @@
 // Pure helpers for the fast-ack / background-transcription flow. Kept dependency-free
 // so they can be exercised with node:test without spinning up Supabase/OpenAI/Next.
 
-export const WHISPER_MAX_SIZE = 25 * 1024 * 1024 // 25 MB — actual OpenAI Whisper API limit
+export const OPENAI_TRANSCRIPTION_MAX_SIZE = 25 * 1024 * 1024 // 25 MB — OpenAI audio transcription upload limit
+export const TRANSCRIPTION_CHUNK_TARGET_SIZE = 20 * 1024 * 1024 // keep multipart requests safely below 25 MB
 
-/**
- * Whisper has a hard 25MB request limit. We never truncate audio to fit it (PR #3's
- * approach); instead we refuse honestly so a human can decide on chunking later.
- */
-export function isTooLargeForWhisper(sizeBytes) {
-  return typeof sizeBytes === 'number' && sizeBytes > WHISPER_MAX_SIZE
+/** OpenAI's file transcription endpoint has a hard 25MB request limit. */
+export function isTooLargeForSingleTranscriptionUpload(sizeBytes) {
+  return typeof sizeBytes === 'number' && sizeBytes > OPENAI_TRANSCRIPTION_MAX_SIZE
+}
+
+/** Builds ordered inclusive byte ranges that each fit below the transcription upload limit. */
+export function buildAudioChunkRanges(totalBytes, chunkSize = TRANSCRIPTION_CHUNK_TARGET_SIZE) {
+  if (!Number.isFinite(totalBytes) || totalBytes <= 0) {
+    throw new Error('Ungültige Audio-Größe: Content-Length fehlt oder ist 0')
+  }
+  if (!Number.isFinite(chunkSize) || chunkSize <= 0 || chunkSize > OPENAI_TRANSCRIPTION_MAX_SIZE) {
+    throw new Error('Ungültige Chunk-Größe für OpenAI-Transkription')
+  }
+
+  const total = Math.ceil(totalBytes / chunkSize)
+  return Array.from({ length: total }, (_, index) => {
+    const start = index * chunkSize
+    const end = Math.min(totalBytes - 1, start + chunkSize - 1)
+    return { start, end, index, total }
+  })
+}
+
+/** Joins chunk transcripts without claiming empty chunk output is meaningful text. */
+export function joinTranscriptChunks(chunks) {
+  return chunks
+    .map((chunk) => (typeof chunk === 'string' ? chunk.trim() : ''))
+    .filter(Boolean)
+    .join('\n\n')
 }
 
 /**
