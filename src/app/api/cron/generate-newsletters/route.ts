@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
+import { getOpenRouterConfig } from '@/lib/cron/openrouter-config.mjs'
+import { buildNewsletterCompletionOptions } from '@/lib/cron/newsletter-request.mjs'
 
-const MAX_TRANSCRIPT_CHARS = 150_000 // ~150k chars ≈ safe for Claude context
+const MAX_TRANSCRIPT_CHARS = 150_000 // ~150k chars stays safely within the model context
 
 export const maxDuration = 60 // Vercel Hobby plan
 
@@ -17,10 +19,8 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createAdminClient()
-  const openrouter = new OpenAI({
-    baseURL: 'https://openrouter.ai/api/v1',
-    apiKey: process.env.OPENROUTER_API_KEY,
-  })
+  const openrouterConfig = getOpenRouterConfig()
+  const openrouter = new OpenAI(openrouterConfig.client)
 
   let generated = 0
   let failed = 0
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
     // Process sequentially (rate limits)
     for (const episode of episodes) {
       try {
-        await generateNewsletter(supabase, openrouter, episode)
+        await generateNewsletter(supabase, openrouter, openrouterConfig.newsletterModel, episode)
         generated++
       } catch {
         failed++
@@ -81,6 +81,7 @@ interface EpisodeWithPodcast {
 async function generateNewsletter(
   supabase: ReturnType<typeof createAdminClient>,
   openrouter: OpenAI,
+  model: string,
   episode: EpisodeWithPodcast
 ): Promise<void> {
   // Mark as generating
@@ -100,11 +101,8 @@ async function generateNewsletter(
       ? episode.transcript.slice(0, MAX_TRANSCRIPT_CHARS) + '\n\n[Transkript gekürzt]'
       : episode.transcript
 
-    const completion = await openrouter.chat.completions.create({
-      model: process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4',
-      max_tokens: 3000,
-      temperature: 0.7,
-      messages: [{
+    const requestOptions = buildNewsletterCompletionOptions(model, [
+      {
         role: 'user',
         content: `Du fasst eine Podcast-Episode zusammen. Dein Ziel ist, mir das Wissen aus dem Podcast so zu vermitteln, als hättest du ihn für mich gehört. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln.
 
@@ -137,9 +135,10 @@ Erstelle folgende Struktur (exakt diese Überschriften verwenden):
 ## Einordnung
 [Kritische Reflexion oder Kontext – wie das Gesagte einzuordnen ist. 2-3 Sätze. Falls nicht sinnvoll, diese Sektion weglassen.]
 
-Mindestens 3 Bullet Points pro Sektion. Optionale Sektionen nur aufnehmen, wenn der Inhalt sie hergibt.`
-      }]
-    })
+Mindestens 3 Bullet Points pro Sektion. Optionale Sektionen nur aufnehmen, wenn der Inhalt sie hergibt.`,
+      },
+    ])
+    const completion = await openrouter.chat.completions.create(requestOptions)
 
     const responseText = completion.choices[0]?.message?.content
     if (!responseText) {
