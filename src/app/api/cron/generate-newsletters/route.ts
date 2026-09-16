@@ -3,6 +3,7 @@ import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 import { getOpenRouterConfig } from '@/lib/cron/openrouter-config.mjs'
+import { buildNewsletterCompletionOptions } from '@/lib/cron/newsletter-request.mjs'
 
 const MAX_TRANSCRIPT_CHARS = 150_000 // ~150k chars stays safely within the model context
 
@@ -100,11 +101,8 @@ async function generateNewsletter(
       ? episode.transcript.slice(0, MAX_TRANSCRIPT_CHARS) + '\n\n[Transkript gekürzt]'
       : episode.transcript
 
-    const completion = await openrouter.chat.completions.create({
-      model,
-      max_tokens: 3000,
-      temperature: 0.7,
-      messages: [{
+    const requestOptions = buildNewsletterCompletionOptions(model, [
+      {
         role: 'user',
         content: `Du fasst eine Podcast-Episode zusammen. Dein Ziel ist, mir das Wissen aus dem Podcast so zu vermitteln, als hättest du ihn für mich gehört. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln.
 
@@ -137,9 +135,10 @@ Erstelle folgende Struktur (exakt diese Überschriften verwenden):
 ## Einordnung
 [Kritische Reflexion oder Kontext – wie das Gesagte einzuordnen ist. 2-3 Sätze. Falls nicht sinnvoll, diese Sektion weglassen.]
 
-Mindestens 3 Bullet Points pro Sektion. Optionale Sektionen nur aufnehmen, wenn der Inhalt sie hergibt.`
-      }]
-    })
+Mindestens 3 Bullet Points pro Sektion. Optionale Sektionen nur aufnehmen, wenn der Inhalt sie hergibt.`,
+      },
+    ])
+    const completion = await openrouter.chat.completions.create(requestOptions)
 
     const responseText = completion.choices[0]?.message?.content
     if (!responseText) {
