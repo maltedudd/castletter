@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
+import { getOpenRouterConfig } from '@/lib/cron/openrouter-config.mjs'
 import {
   buildAudioChunkRanges,
   isTooLargeForSingleTranscriptionUpload,
@@ -127,8 +128,9 @@ export async function GET(request: NextRequest) {
     // download + Whisper + DB update continues below via after() within the function's
     // remaining maxDuration budget, well past when this response has already been sent.
     after(async () => {
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-      await transcribeEpisode(supabase, openai, episode)
+      const openrouterConfig = getOpenRouterConfig()
+      const openrouter = new OpenAI(openrouterConfig.client)
+      await transcribeEpisode(supabase, openrouter, openrouterConfig.transcriptionModel, episode)
     })
 
     return NextResponse.json(buildAcceptedResponse(episode.id, staleReset), { status: 202 })
@@ -155,7 +157,8 @@ interface Episode {
  */
 async function transcribeEpisode(
   supabase: ReturnType<typeof createAdminClient>,
-  openai: OpenAI,
+  openrouter: OpenAI,
+  model: string,
   episode: Episode
 ): Promise<{ success: boolean }> {
   // Skip Whisper API if transcript already exists in DB
@@ -185,10 +188,10 @@ async function transcribeEpisode(
 
     let transcript: string
     if (isTooLargeForSingleTranscriptionUpload(contentLength)) {
-      transcript = await transcribeAudioRanges(openai, episode.audio_url, contentLength, contentType, ext)
+      transcript = await transcribeAudioRanges(openrouter, model, episode.audio_url, contentLength, contentType, ext)
     } else {
       const audioBuffer = Buffer.from(await response.arrayBuffer())
-      transcript = await transcribeAudioBuffer(openai, audioBuffer, contentType, ext)
+      transcript = await transcribeAudioBuffer(openrouter, model, audioBuffer, contentType, ext)
     }
 
     if (!transcript || transcript.trim().length === 0) {
@@ -235,26 +238,28 @@ async function transcribeEpisode(
 }
 
 async function transcribeAudioBuffer(
-  openai: OpenAI,
+  openrouter: OpenAI,
+  model: string,
   audioBuffer: Buffer,
   contentType: string,
   ext: string
 ): Promise<string> {
   if (!isTooLargeForSingleTranscriptionUpload(audioBuffer.length)) {
-    return transcribeSingleChunk(openai, audioBuffer, contentType, ext, 'episode')
+    return transcribeSingleChunk(openrouter, model, audioBuffer, contentType, ext, 'episode')
   }
 
   const ranges = buildAudioChunkRanges(audioBuffer.length)
   const transcripts: string[] = []
   for (const range of ranges) {
     const chunk = audioBuffer.subarray(range.start, range.end + 1)
-    transcripts.push(await transcribeSingleChunk(openai, chunk, contentType, ext, `episode-part-${range.index + 1}-of-${range.total}`))
+    transcripts.push(await transcribeSingleChunk(openrouter, model, chunk, contentType, ext, `episode-part-${range.index + 1}-of-${range.total}`))
   }
   return joinTranscriptChunks(transcripts)
 }
 
 async function transcribeAudioRanges(
-  openai: OpenAI,
+  openrouter: OpenAI,
+  model: string,
   audioUrl: string,
   totalBytes: number,
   contentType: string,
@@ -283,7 +288,7 @@ async function transcribeAudioRanges(
     }
 
     transcripts.push(
-      await transcribeSingleChunk(openai, chunkBuffer, contentType, ext, `episode-part-${range.index + 1}-of-${range.total}`)
+      await transcribeSingleChunk(openrouter, model, chunkBuffer, contentType, ext, `episode-part-${range.index + 1}-of-${range.total}`)
     )
   }
 
@@ -291,7 +296,8 @@ async function transcribeAudioRanges(
 }
 
 async function transcribeSingleChunk(
-  openai: OpenAI,
+  openrouter: OpenAI,
+  model: string,
   audioBuffer: Buffer,
   contentType: string,
   ext: string,
@@ -302,9 +308,9 @@ async function transcribeSingleChunk(
     audioBuffer.byteOffset + audioBuffer.byteLength
   ) as ArrayBuffer
   const file = new File([arrayBuffer], `${basename}.${ext}`, { type: contentType })
-  const transcription = await openai.audio.transcriptions.create({
+  const transcription = await openrouter.audio.transcriptions.create({
     file,
-    model: 'gpt-transcribe',
+    model,
   })
   return extractTranscriptText(transcription)
 }

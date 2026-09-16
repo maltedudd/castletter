@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
+import { getOpenRouterConfig } from '@/lib/cron/openrouter-config.mjs'
 
-const MAX_TRANSCRIPT_CHARS = 150_000 // ~150k chars ≈ safe for Claude context
+const MAX_TRANSCRIPT_CHARS = 150_000 // ~150k chars stays safely within the model context
 
 export const maxDuration = 60 // Vercel Hobby plan
 
@@ -17,10 +18,8 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createAdminClient()
-  const openrouter = new OpenAI({
-    baseURL: 'https://openrouter.ai/api/v1',
-    apiKey: process.env.OPENROUTER_API_KEY,
-  })
+  const openrouterConfig = getOpenRouterConfig()
+  const openrouter = new OpenAI(openrouterConfig.client)
 
   let generated = 0
   let failed = 0
@@ -53,7 +52,7 @@ export async function GET(request: NextRequest) {
     // Process sequentially (rate limits)
     for (const episode of episodes) {
       try {
-        await generateNewsletter(supabase, openrouter, episode)
+        await generateNewsletter(supabase, openrouter, openrouterConfig.newsletterModel, episode)
         generated++
       } catch {
         failed++
@@ -81,6 +80,7 @@ interface EpisodeWithPodcast {
 async function generateNewsletter(
   supabase: ReturnType<typeof createAdminClient>,
   openrouter: OpenAI,
+  model: string,
   episode: EpisodeWithPodcast
 ): Promise<void> {
   // Mark as generating
@@ -101,7 +101,7 @@ async function generateNewsletter(
       : episode.transcript
 
     const completion = await openrouter.chat.completions.create({
-      model: process.env.OPENROUTER_MODEL || 'anthropic/claude-sonnet-4',
+      model,
       max_tokens: 3000,
       temperature: 0.7,
       messages: [{
