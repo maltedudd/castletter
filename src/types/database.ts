@@ -3,11 +3,14 @@
  * Auto-generated types can be created with: npx supabase gen types typescript
  */
 
+export type NewsletterDeliveryMode = 'daily' | 'immediate'
+
 export interface UserSettings {
   id: string
   user_id: string
   newsletter_email: string
-  newsletter_delivery_hour: number // 0-23 (UTC)
+  newsletter_delivery_hour: number // 0-23 (UTC), used for the daily digest
+  newsletter_delivery_mode: NewsletterDeliveryMode
   created_at: string
   updated_at: string
 }
@@ -16,12 +19,14 @@ export interface UserSettingsInsert {
   user_id: string
   newsletter_email: string
   newsletter_delivery_hour: number
+  newsletter_delivery_mode?: NewsletterDeliveryMode
   updated_at?: string
 }
 
 export interface UserSettingsUpdate {
   newsletter_email?: string
   newsletter_delivery_hour?: number
+  newsletter_delivery_mode?: NewsletterDeliveryMode
   updated_at?: string
 }
 
@@ -63,6 +68,7 @@ export type EpisodeStatus =
   | 'failed'
   | 'generating_newsletter'
   | 'newsletter_ready'
+  | 'newsletter_sending'
   | 'newsletter_failed'
   | 'newsletter_sent'
 

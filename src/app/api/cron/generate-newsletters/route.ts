@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
+import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 import { getOpenRouterConfig } from '@/lib/cron/openrouter-config.mjs'
 import { buildNewsletterCompletionOptions } from '@/lib/cron/newsletter-request.mjs'
+import { normalizeDeliveryMode } from '@/lib/newsletter/delivery.mjs'
+import { deliverNewsletters, type NewsletterRecipient } from '@/lib/newsletter/send'
 
 const MAX_TRANSCRIPT_CHARS = 150_000 // ~150k chars stays safely within the model context
 
@@ -21,9 +24,11 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient()
   const openrouterConfig = getOpenRouterConfig()
   const openrouter = new OpenAI(openrouterConfig.client)
+  const resend = new Resend(process.env.RESEND_API_KEY)
 
   let generated = 0
   let failed = 0
+  let sentImmediately = 0
 
   try {
     // Fetch recent transcribed episodes only. This prevents any stale backlog
@@ -32,7 +37,7 @@ export async function GET(request: NextRequest) {
       .from('episodes')
       .select(`
         id, title, transcript, audio_url, subscription_id,
-        podcast_subscriptions!inner(title)
+        podcast_subscriptions!inner(title, user_id)
       `)
       .eq('status', 'transcribed')
       .gte('published_at', getRecentEpisodeCutoff())
@@ -57,10 +62,19 @@ export async function GET(request: NextRequest) {
         generated++
       } catch {
         failed++
+        continue
+      }
+
+      // Users who chose immediate delivery get this episode right away. A failure here
+      // leaves the episode `newsletter_ready`; the send cron retries it.
+      try {
+        sentImmediately += await sendImmediately(supabase, resend, episode)
+      } catch (err) {
+        console.error(`Immediate newsletter for episode ${episode.id} failed:`, err instanceof Error ? err.message : err)
       }
     }
 
-    return NextResponse.json({ success: true, generated, failed })
+    return NextResponse.json({ success: true, generated, failed, sentImmediately })
   } catch (err) {
     return NextResponse.json(
       { error: 'Newsletter generation failed', details: err instanceof Error ? err.message : 'Unknown' },
@@ -75,7 +89,40 @@ interface EpisodeWithPodcast {
   transcript: string | null
   audio_url: string
   subscription_id: string
-  podcast_subscriptions: { title: string }[]
+  // Many-to-one embed: PostgREST returns a single object (typed loosely to stay safe).
+  podcast_subscriptions: PodcastRef | PodcastRef[] | null
+}
+
+interface PodcastRef {
+  title: string
+  user_id: string
+}
+
+function getPodcast(episode: EpisodeWithPodcast): PodcastRef | undefined {
+  const ref = episode.podcast_subscriptions
+  return (Array.isArray(ref) ? ref[0] : ref) ?? undefined
+}
+
+/** Mails a freshly generated newsletter if its owner chose immediate delivery. */
+async function sendImmediately(
+  supabase: ReturnType<typeof createAdminClient>,
+  resend: Resend,
+  episode: EpisodeWithPodcast
+): Promise<number> {
+  const userId = getPodcast(episode)?.user_id
+  if (!userId) return 0
+
+  const { data: settings, error } = await supabase
+    .from('user_settings')
+    .select('user_id, newsletter_email, newsletter_delivery_mode')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error) throw new Error(`Failed to load user settings: ${error.message}`)
+  if (!settings || normalizeDeliveryMode(settings.newsletter_delivery_mode) !== 'immediate') return 0
+
+  const { mailsSent } = await deliverNewsletters(supabase, resend, settings as NewsletterRecipient, [episode.id])
+  return mailsSent
 }
 
 async function generateNewsletter(
@@ -95,7 +142,7 @@ async function generateNewsletter(
       throw new PermanentError('Kein Transkript vorhanden')
     }
 
-    const podcastTitle = episode.podcast_subscriptions[0]?.title || 'Podcast'
+    const podcastTitle = getPodcast(episode)?.title || 'Podcast'
     // Truncate transcript if too long
     const transcript = episode.transcript.length > MAX_TRANSCRIPT_CHARS
       ? episode.transcript.slice(0, MAX_TRANSCRIPT_CHARS) + '\n\n[Transkript gekürzt]'
