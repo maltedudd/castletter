@@ -3,15 +3,18 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 import { getOpenRouterConfig } from '@/lib/cron/openrouter-config.mjs'
 import {
-  buildAudioChunkRanges,
-  isTooLargeForSingleTranscriptionUpload,
-  joinTranscriptChunks,
   buildAcceptedResponse,
   buildNoPendingResponse,
+  buildDisabledResponse,
   buildClaimMarker,
   isStaleTranscribingRow,
   resetStaleTranscribingRows,
 } from '@/lib/cron/transcribe-ack.mjs'
+import {
+  PermanentError,
+  createOpenRouterChunkTranscriber,
+  transcribeAudioFromUrl,
+} from '@/lib/transcription/audio-transcriber.mjs'
 import OpenAI from 'openai'
 
 // maxDuration bounds the whole function (fast ack + background after() work). cron-job.org
@@ -26,6 +29,12 @@ export async function GET(request: NextRequest) {
 
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // The Docker transcription worker replaces this route; once it is live, this switch
+  // keeps an accidental cron call from claiming episodes and timing out at maxDuration.
+  if (process.env.TRANSCRIPTION_CRON_DISABLED === 'true') {
+    return NextResponse.json(buildDisabledResponse())
   }
 
   const supabase = createAdminClient()
@@ -171,32 +180,12 @@ async function transcribeEpisode(
   }
 
   try {
-    // Download audio. Timeout is generous relative to the old 20s cron-facing budget
-    // because this now runs after the response was already sent, inside the
-    // function's remaining maxDuration=60 window rather than cron-job.org's 30s one.
-    const response = await fetch(episode.audio_url, {
-      signal: AbortSignal.timeout(45_000),
+    // Download + ordered chunk transcription + join; rejects instead of returning a
+    // partial transcript. Runs inside the function's remaining maxDuration window.
+    const transcript = await transcribeAudioFromUrl({
+      audioUrl: episode.audio_url,
+      transcribeChunk: createOpenRouterChunkTranscriber(openrouter, model),
     })
-
-    if (!response.ok) {
-      throw new PermanentError(`Audio nicht erreichbar (HTTP ${response.status})`)
-    }
-
-    const contentLength = Number(response.headers.get('content-length') || 0)
-    const contentType = response.headers.get('content-type') || 'audio/mpeg'
-    const ext = getAudioExtension(episode.audio_url, contentType)
-
-    let transcript: string
-    if (isTooLargeForSingleTranscriptionUpload(contentLength)) {
-      transcript = await transcribeAudioRanges(openrouter, model, episode.audio_url, contentLength, contentType, ext)
-    } else {
-      const audioBuffer = Buffer.from(await response.arrayBuffer())
-      transcript = await transcribeAudioBuffer(openrouter, model, audioBuffer, contentType, ext)
-    }
-
-    if (!transcript || transcript.trim().length === 0) {
-      throw new PermanentError('Keine Sprache erkannt – die Episode enthält möglicherweise nur Musik')
-    }
 
     // Save full transcript
     await supabase
@@ -234,128 +223,5 @@ async function transcribeEpisode(
     }
 
     return { success: false }
-  }
-}
-
-async function transcribeAudioBuffer(
-  openrouter: OpenAI,
-  model: string,
-  audioBuffer: Buffer,
-  contentType: string,
-  ext: string
-): Promise<string> {
-  if (!isTooLargeForSingleTranscriptionUpload(audioBuffer.length)) {
-    return transcribeSingleChunk(openrouter, model, audioBuffer, contentType, ext, 'episode')
-  }
-
-  const ranges = buildAudioChunkRanges(audioBuffer.length)
-  const transcripts: string[] = []
-  for (const range of ranges) {
-    const chunk = audioBuffer.subarray(range.start, range.end + 1)
-    transcripts.push(await transcribeSingleChunk(openrouter, model, chunk, contentType, ext, `episode-part-${range.index + 1}-of-${range.total}`))
-  }
-  return joinTranscriptChunks(transcripts)
-}
-
-async function transcribeAudioRanges(
-  openrouter: OpenAI,
-  model: string,
-  audioUrl: string,
-  totalBytes: number,
-  contentType: string,
-  ext: string
-): Promise<string> {
-  const ranges = buildAudioChunkRanges(totalBytes)
-  const transcripts: string[] = []
-
-  for (const range of ranges) {
-    const chunkResponse = await fetch(audioUrl, {
-      headers: { Range: `bytes=${range.start}-${range.end}` },
-      signal: AbortSignal.timeout(45_000),
-    })
-
-    if (chunkResponse.status !== 206) {
-      throw new PermanentError(
-        `Audio-Server unterstützt kein zuverlässiges Range-Chunking (HTTP ${chunkResponse.status}). Keine Teiltranskription gespeichert.`
-      )
-    }
-
-    const chunkBuffer = Buffer.from(await chunkResponse.arrayBuffer())
-    if (isTooLargeForSingleTranscriptionUpload(chunkBuffer.length)) {
-      throw new PermanentError(
-        `Transkriptions-Chunk ${range.index + 1}/${range.total} ist zu groß (${Math.round(chunkBuffer.length / 1024 / 1024)} MB). Keine Teiltranskription gespeichert.`
-      )
-    }
-
-    transcripts.push(
-      await transcribeSingleChunk(openrouter, model, chunkBuffer, contentType, ext, `episode-part-${range.index + 1}-of-${range.total}`)
-    )
-  }
-
-  return joinTranscriptChunks(transcripts)
-}
-
-async function transcribeSingleChunk(
-  openrouter: OpenAI,
-  model: string,
-  audioBuffer: Buffer,
-  contentType: string,
-  ext: string,
-  basename: string
-): Promise<string> {
-  const arrayBuffer = audioBuffer.buffer.slice(
-    audioBuffer.byteOffset,
-    audioBuffer.byteOffset + audioBuffer.byteLength
-  ) as ArrayBuffer
-  const file = new File([arrayBuffer], `${basename}.${ext}`, { type: contentType })
-  const transcription = await openrouter.audio.transcriptions.create({
-    file,
-    model,
-  })
-  return extractTranscriptText(transcription)
-}
-
-function extractTranscriptText(transcription: unknown): string {
-  if (typeof transcription === 'string') return transcription
-  if (transcription && typeof transcription === 'object' && 'text' in transcription) {
-    const text = (transcription as { text?: unknown }).text
-    return typeof text === 'string' ? text : String(text ?? '')
-  }
-  return String(transcription ?? '')
-}
-
-/** Determine audio file extension from URL or content-type */
-function getAudioExtension(url: string, contentType: string | null): string {
-  // Try URL extension first
-  const urlExt = url.split('?')[0].split('.').pop()?.toLowerCase()
-  if (urlExt && ['mp3', 'm4a', 'wav', 'flac', 'ogg', 'webm', 'mp4'].includes(urlExt)) {
-    return urlExt
-  }
-
-  // Fallback to content-type
-  const typeMap: Record<string, string> = {
-    'audio/mpeg': 'mp3',
-    'audio/mp3': 'mp3',
-    'audio/mp4': 'm4a',
-    'audio/x-m4a': 'm4a',
-    'audio/wav': 'wav',
-    'audio/flac': 'flac',
-    'audio/ogg': 'ogg',
-    'audio/webm': 'webm',
-  }
-
-  if (contentType) {
-    const baseType = contentType.split(';')[0].trim()
-    if (typeMap[baseType]) return typeMap[baseType]
-  }
-
-  return 'mp3' // Default
-}
-
-/** Error class for permanent failures that should not be retried */
-class PermanentError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'PermanentError'
   }
 }

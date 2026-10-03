@@ -49,3 +49,7 @@ HOW_TO_USE_AGENTS.md
 PROJECT_CONTEXT.md
 TEMPLATE_CHANGELOG.md
 features/
+
+# transcription worker
+/worker/node_modules
+/worker/.env

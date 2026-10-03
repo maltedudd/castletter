@@ -8,6 +8,7 @@ import {
   joinTranscriptChunks,
   buildAcceptedResponse,
   buildNoPendingResponse,
+  buildDisabledResponse,
   TRANSCRIBING_LEASE_MS,
   getStaleTranscribingCutoff,
   isStaleTranscribing,
@@ -322,4 +323,13 @@ test('resetStaleTranscribingRows surfaces the first update error without throwin
   )
   assert.equal(result.staleReset, 0)
   assert.equal(result.error.message, 'boom')
+})
+
+test('disabled response tells cron-job.org nothing was accepted', () => {
+  assert.deepEqual(buildDisabledResponse(), {
+    success: true,
+    accepted: 0,
+    disabled: true,
+    message: 'Transcription cron disabled (handled by transcription worker)',
+  })
 })

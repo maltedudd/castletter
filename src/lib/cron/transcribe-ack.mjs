@@ -61,6 +61,16 @@ export function buildNoPendingResponse(staleReset = 0) {
   }
 }
 
+/** Response when TRANSCRIPTION_CRON_DISABLED is set because the Docker worker took over. */
+export function buildDisabledResponse() {
+  return {
+    success: true,
+    accepted: 0,
+    disabled: true,
+    message: 'Transcription cron disabled (handled by transcription worker)',
+  }
+}
+
 // A `transcribing` row is only ever written by this route right before it starts the
 // background after() work (fetch + Whisper), which itself is bounded by maxDuration=60s
 // plus a 45s download timeout. A row still `transcribing` well past that has to mean the

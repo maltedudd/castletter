@@ -1,0 +1,7 @@
+# Only what the worker image needs from the repository root.
+*
+!worker/package.json
+!worker/package-lock.json
+!worker/*.mjs
+!src/lib/cron/*.mjs
+!src/lib/transcription/*.mjs
