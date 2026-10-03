@@ -1,0 +1,157 @@
+// Newsletter delivery shared by the send cron (daily digests + immediate fallback) and the
+// generate cron (immediate sends). Dependency-free: the Supabase client and the mail sender
+// are injected so claim/release behaviour can be tested without a database or Resend.
+
+export const DELIVERY_MODES = ['daily', 'immediate']
+export const DEFAULT_DELIVERY_MODE = 'daily'
+
+// A `newsletter_sending` claim older than this means the run died between claiming and
+// marking the episode sent; the send cron hands it back to `newsletter_ready`.
+export const SENDING_LEASE_MS = 15 * 60 * 1000
+
+const NEWSLETTER_COLUMNS =
+  'id, title, audio_url, subscription_id, published_at, ' +
+  'episode_newsletters!inner(intro, bullet_points, key_takeaways, action_items, quotes, speakers, reflection)'
+
+export function normalizeDeliveryMode(mode) {
+  return DELIVERY_MODES.includes(mode) ? mode : DEFAULT_DELIVERY_MODE
+}
+
+/** Daily users get their digest in their UTC hour; immediate users are served every run. */
+export function isDueForDelivery(settings, currentHourUTC) {
+  if (normalizeDeliveryMode(settings.newsletter_delivery_mode) === 'immediate') return true
+  return settings.newsletter_delivery_hour === currentHourUTC
+}
+
+export function buildNewsletterSubject(items, mode) {
+  if (normalizeDeliveryMode(mode) === 'immediate' && items.length === 1) {
+    return `${items[0].podcastTitle}: ${items[0].episodeTitle}`
+  }
+  return `Deine neuen Podcast-Updates (${items.length} ${items.length === 1 ? 'Episode' : 'Episoden'})`
+}
+
+/**
+ * Claims episodes for sending with a compare-and-swap on `newsletter_ready`, so the send
+ * cron and an immediate send from the generate cron never mail the same episode twice.
+ * The claim time is kept in `newsletter_sent_at` (overwritten once actually sent).
+ */
+export async function claimEpisodesForSending(supabase, episodeIds, now = new Date()) {
+  if (episodeIds.length === 0) return []
+  const { data, error } = await supabase
+    .from('episodes')
+    .update({ status: 'newsletter_sending', newsletter_sent_at: now.toISOString() })
+    .in('id', episodeIds)
+    .eq('status', 'newsletter_ready')
+    .select('id')
+  if (error) throw new Error(`Episoden konnten nicht für den Versand reserviert werden: ${error.message}`)
+  return (data ?? []).map((row) => row.id)
+}
+
+async function markEpisodesSent(supabase, episodeIds, now) {
+  const { error } = await supabase
+    .from('episodes')
+    .update({ status: 'newsletter_sent', newsletter_sent_at: now.toISOString() })
+    .in('id', episodeIds)
+    .eq('status', 'newsletter_sending')
+    .select('id')
+  if (error) throw new Error(`Episoden konnten nicht als versendet markiert werden: ${error.message}`)
+}
+
+async function releaseEpisodes(supabase, episodeIds) {
+  await supabase
+    .from('episodes')
+    .update({ status: 'newsletter_ready', newsletter_sent_at: null })
+    .in('id', episodeIds)
+    .eq('status', 'newsletter_sending')
+    .select('id')
+}
+
+/** Hands claims of crashed runs back to `newsletter_ready`. Returns how many were reset. */
+export async function resetStaleSendingEpisodes(supabase, now = new Date()) {
+  const cutoff = new Date(now.getTime() - SENDING_LEASE_MS).toISOString()
+  const { data, error } = await supabase
+    .from('episodes')
+    .update({ status: 'newsletter_ready', newsletter_sent_at: null })
+    .eq('status', 'newsletter_sending')
+    .lt('newsletter_sent_at', cutoff)
+    .select('id')
+  if (error) throw new Error(`Hängende Versand-Reservierungen konnten nicht zurückgesetzt werden: ${error.message}`)
+  return data?.length ?? 0
+}
+
+function toNewsletterItem(episode, podcastTitle) {
+  const newsletter = Array.isArray(episode.episode_newsletters)
+    ? episode.episode_newsletters[0]
+    : episode.episode_newsletters
+
+  return {
+    podcastTitle,
+    episodeTitle: episode.title,
+    intro: newsletter?.intro || '',
+    bulletPoints: newsletter?.bullet_points || [],
+    keyTakeaways: newsletter?.key_takeaways || [],
+    actionItems: newsletter?.action_items || [],
+    quotes: newsletter?.quotes || [],
+    speakers: newsletter?.speakers || [],
+    reflection: newsletter?.reflection || null,
+    audioUrl: episode.audio_url,
+  }
+}
+
+/**
+ * Sends the user's ready newsletters according to their delivery mode: one digest for
+ * `daily`, one mail per episode for `immediate`. `episodeIds` restricts the send to specific
+ * episodes (the immediate send right after generation). Only episodes this call claimed are
+ * mailed; a failed send releases its claim and rethrows.
+ *
+ * `sendEmail({ to, subject, items })` must throw if the mail was not accepted.
+ */
+export async function sendNewsletterToUser({ supabase, user, sendEmail, now = new Date(), recentCutoff, episodeIds }) {
+  const mode = normalizeDeliveryMode(user.newsletter_delivery_mode)
+  const result = { mailsSent: 0, episodesSent: 0 }
+
+  const { data: subscriptions, error: subscriptionError } = await supabase
+    .from('podcast_subscriptions')
+    .select('id, title')
+    .eq('user_id', user.user_id)
+  if (subscriptionError) throw new Error(`Abos konnten nicht gelesen werden: ${subscriptionError.message}`)
+  if (!subscriptions || subscriptions.length === 0) return result
+
+  const podcastTitles = new Map(subscriptions.map((s) => [s.id, s.title]))
+
+  // Recent episodes only, so a resumed cron never mails an old backlog.
+  let query = supabase
+    .from('episodes')
+    .select(NEWSLETTER_COLUMNS)
+    .eq('status', 'newsletter_ready')
+    .gte('published_at', recentCutoff)
+    .in('subscription_id', [...podcastTitles.keys()])
+  if (episodeIds) query = query.in('id', episodeIds)
+  const { data: episodes, error: episodeError } = await query.order('published_at', { ascending: true })
+  if (episodeError) throw new Error(`Episoden konnten nicht gelesen werden: ${episodeError.message}`)
+  if (!episodes || episodes.length === 0) return result
+
+  const batches = mode === 'immediate' ? episodes.map((episode) => [episode]) : [episodes]
+
+  for (const batch of batches) {
+    const claimedIds = new Set(await claimEpisodesForSending(supabase, batch.map((e) => e.id), now))
+    const claimed = batch.filter((episode) => claimedIds.has(episode.id))
+    if (claimed.length === 0) continue
+
+    const items = claimed.map((episode) => toNewsletterItem(episode, podcastTitles.get(episode.subscription_id) || 'Podcast'))
+    const ids = claimed.map((episode) => episode.id)
+
+    try {
+      await sendEmail({ to: user.newsletter_email, subject: buildNewsletterSubject(items, mode), items })
+    } catch (err) {
+      await releaseEpisodes(supabase, ids)
+      throw err
+    }
+
+    await markEpisodesSent(supabase, ids, now)
+    result.mailsSent++
+    result.episodesSent += ids.length
+  }
+
+  return result
+}
