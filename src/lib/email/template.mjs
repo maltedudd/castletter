@@ -3,18 +3,20 @@
  * Uses inline styles for maximum email client compatibility
  */
 
-interface NewsletterItem {
-  podcastTitle: string
-  episodeTitle: string
-  intro: string
-  bulletPoints: string[]
-  keyTakeaways: string[]
-  actionItems: string[]
-  quotes: string[]
-  speakers: string[]
-  reflection: string | null
-  audioUrl: string
-}
+/**
+ * @typedef {Object} NewsletterItem
+ * @property {string} podcastTitle
+ * @property {string} episodeTitle
+ * @property {string} intro
+ * @property {string[]} bulletPoints
+ * @property {string[]} keyTakeaways
+ * @property {string[]} actionItems
+ * @property {string[]} quotes
+ * @property {string[]} speakers
+ * @property {string | null} reflection
+ * @property {string} audioUrl
+ */
+
 
 const COLORS = {
   primary: '#042940',
@@ -27,26 +29,9 @@ const COLORS = {
   textMuted: '#666666',
 }
 
-type Locale = 'de' | 'en'
 
-interface EmailStrings {
-  subject: string
-  headerTagline: string
-  greeting: string
-  greetingBody: string
-  footerSentTo: (email: string) => string
-  footerChangeSettings: string
-  sectionTopics: string
-  sectionTakeaways: string
-  sectionTips: string
-  sectionQuotes: string
-  sectionSpeakers: string
-  sectionReflection: string
-  listenButton: string
-  settingsLink: string
-}
 
-const strings: Record<Locale, EmailStrings> = {
+const strings = {
   de: {
     subject: 'Deine neuen Podcast-Updates',
     headerTagline: 'Deine täglichen Podcast-Highlights',
@@ -81,16 +66,16 @@ const strings: Record<Locale, EmailStrings> = {
   },
 }
 
-export function getEmailSubject(locale: Locale = 'de'): string {
+export function getEmailSubject(locale = 'de') {
   return strings[locale].subject
 }
 
 export function generateEmailHTML(
-  userEmail: string,
-  newsletters: NewsletterItem[],
-  settingsUrl: string,
-  locale: Locale = 'de'
-): string {
+  userEmail,
+  newsletters,
+  settingsUrl,
+  locale = 'de'
+) {
   const s = strings[locale]
   const episodeBlocks = newsletters
     .map((item) => generateEpisodeBlock(item, s))
@@ -143,13 +128,13 @@ export function generateEmailHTML(
 </html>`
 }
 
-function generateBulletList(items: string[]): string {
+function generateBulletList(items) {
   return items
     .map((item) => `<li style="margin-bottom: 6px; color: ${COLORS.primary}; font-size: 14px; line-height: 1.5;">${escapeHtml(item)}</li>`)
     .join('')
 }
 
-function generateSection(title: string, items: string[], titleColor: string): string {
+function generateSection(title, items, titleColor) {
   if (!items || items.length === 0) return ''
   return `
           <tr>
@@ -162,7 +147,7 @@ function generateSection(title: string, items: string[], titleColor: string): st
           </tr>`
 }
 
-function generateEpisodeBlock(item: NewsletterItem, s: EmailStrings): string {
+function generateEpisodeBlock(item, s) {
   return `
     <tr>
       <td style="padding: 20px 30px;">
@@ -212,14 +197,14 @@ function generateEpisodeBlock(item: NewsletterItem, s: EmailStrings): string {
 
 /** Generate plain text version as fallback */
 export function generateEmailPlainText(
-  newsletters: NewsletterItem[],
-  settingsUrl: string,
-  locale: Locale = 'de'
-): string {
+  newsletters,
+  settingsUrl,
+  locale = 'de'
+) {
   const s = strings[locale]
 
   const blocks = newsletters.map((item) => {
-    const sections: string[] = []
+    const sections = []
 
     sections.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
     sections.push(`${item.podcastTitle}`)
@@ -281,7 +266,7 @@ ${s.settingsLink}: ${settingsUrl}
 `
 }
 
-function escapeHtml(str: string): string {
+function escapeHtml(str) {
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

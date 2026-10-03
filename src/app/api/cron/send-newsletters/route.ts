@@ -15,6 +15,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // The Docker worker runs the newsletter pipeline once this is set.
+  if (process.env.NEWSLETTER_CRON_DISABLED === 'true') {
+    return NextResponse.json({ success: true, disabled: true, message: 'Newsletter cron disabled (handled by worker)' })
+  }
+
   const supabase = createAdminClient()
   const resend = new Resend(process.env.RESEND_API_KEY)
 

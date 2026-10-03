@@ -261,3 +261,27 @@ test('resetStaleSendingEpisodes frees claims older than the lease, keeps fresh o
   assert.equal(byId.fresh.status, 'newsletter_sending')
   assert.equal(byId.sent.status, 'newsletter_sent')
 })
+
+test('deliverImmediatelyIfWanted mails only for immediate users', async () => {
+  const { makeFakeSupabase } = await import('../helpers/fake-supabase.mjs')
+  const { deliverImmediatelyIfWanted } = await import('../../src/lib/newsletter/delivery.mjs')
+  const tables = (mode) => ({
+    user_settings: [{ user_id: 'user-1', newsletter_email: 'malte@example.com', newsletter_delivery_mode: mode }],
+    podcast_subscriptions: [{ id: 'sub-1', title: 'Lage der Nation', user_id: 'user-1' }],
+    episodes: [episode('a'), episode('b')],
+  })
+
+  const immediate = makeFakeSupabase(tables('immediate'))
+  const { mails, sendEmail } = recordingMailer()
+  const sent = await deliverImmediatelyIfWanted({
+    supabase: immediate, userId: 'user-1', episodeId: 'b', sendEmail, now: NOW, recentCutoff: CUTOFF,
+  })
+  assert.equal(sent, 1)
+  assert.equal(mails[0].subject, 'Lage der Nation: Episode b')
+  assert.equal(immediate.data.episodes.find((e) => e.id === 'a').status, 'newsletter_ready')
+
+  const daily = makeFakeSupabase(tables('daily'))
+  assert.equal(await deliverImmediatelyIfWanted({ supabase: daily, userId: 'user-1', episodeId: 'b', sendEmail, now: NOW, recentCutoff: CUTOFF }), 0)
+  assert.equal(await deliverImmediatelyIfWanted({ supabase: daily, userId: undefined, episodeId: 'b', sendEmail, now: NOW, recentCutoff: CUTOFF }), 0)
+  assert.equal(mails.length, 1)
+})

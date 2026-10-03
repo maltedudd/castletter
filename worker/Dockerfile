@@ -10,6 +10,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY src/lib/cron /app/src/lib/cron
 COPY src/lib/transcription /app/src/lib/transcription
+COPY src/lib/newsletter/*.mjs /app/src/lib/newsletter/
+COPY src/lib/email/*.mjs /app/src/lib/email/
 COPY worker/*.mjs ./
 
 USER node

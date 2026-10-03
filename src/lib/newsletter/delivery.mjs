@@ -155,3 +155,24 @@ export async function sendNewsletterToUser({ supabase, user, sendEmail, now = ne
 
   return result
 }
+
+/**
+ * Right after a newsletter was generated: mails it if its owner chose immediate delivery.
+ * Returns the number of mails sent (0 for daily users or missing settings).
+ */
+export async function deliverImmediatelyIfWanted({ supabase, userId, episodeId, sendEmail, now = new Date(), recentCutoff }) {
+  if (!userId) return 0
+
+  const { data: settings, error } = await supabase
+    .from('user_settings')
+    .select('user_id, newsletter_email, newsletter_delivery_mode')
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (error) throw new Error(`Einstellungen konnten nicht gelesen werden: ${error.message}`)
+  if (!settings || normalizeDeliveryMode(settings.newsletter_delivery_mode) !== 'immediate') return 0
+
+  const { mailsSent } = await sendNewsletterToUser({
+    supabase, user: settings, sendEmail, now, recentCutoff, episodeIds: [episodeId],
+  })
+  return mailsSent
+}
