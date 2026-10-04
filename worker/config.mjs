@@ -6,6 +6,7 @@ export const DEFAULTS = {
   maxAttempts: 3,
   downloadTimeoutSeconds: 120,
   heartbeatFile: '/tmp/castletter-worker-heartbeat',
+  fromEmail: 'Castletter <newsletter@castletter.app>',
 }
 
 /**
@@ -21,6 +22,14 @@ export function loadWorkerConfig(env = process.env) {
   if (!supabaseUrl) missing.push('SUPABASE_URL')
   if (!serviceRoleKey) missing.push('SUPABASE_SERVICE_ROLE_KEY')
   if (!openrouter.client.apiKey) missing.push('OPENROUTER_API_KEY')
+
+  // Newsletter generation + sending is opt-in so the worker can be rolled out step by step.
+  const newslettersEnabled = env.WORKER_NEWSLETTERS_ENABLED === 'true'
+  const appUrl = env.APP_URL || env.NEXT_PUBLIC_APP_URL
+  if (newslettersEnabled) {
+    if (!env.RESEND_API_KEY) missing.push('RESEND_API_KEY')
+    if (!appUrl) missing.push('APP_URL')
+  }
   if (missing.length > 0) {
     throw new Error(`Fehlende Umgebungsvariablen: ${missing.join(', ')}`)
   }
@@ -35,6 +44,13 @@ export function loadWorkerConfig(env = process.env) {
     downloadTimeoutMs: positiveInt(env, 'TRANSCRIPTION_DOWNLOAD_TIMEOUT_SECONDS', DEFAULTS.downloadTimeoutSeconds) * 1000,
     heartbeatFile: env.TRANSCRIPTION_HEARTBEAT_FILE || DEFAULTS.heartbeatFile,
     heartbeatUrl: env.TRANSCRIPTION_HEARTBEAT_URL || null,
+    newsletters: newslettersEnabled
+      ? {
+          resendApiKey: env.RESEND_API_KEY,
+          fromEmail: env.FROM_EMAIL || DEFAULTS.fromEmail,
+          settingsUrl: `${appUrl.replace(/\/+$/, '')}/settings`,
+        }
+      : null,
   }
 }
 

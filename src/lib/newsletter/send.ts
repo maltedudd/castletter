@@ -1,7 +1,7 @@
 // Wires the dependency-free delivery logic to Resend and the email template.
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { generateEmailHTML, generateEmailPlainText } from '@/lib/email/template'
+import { generateEmailHTML, generateEmailPlainText } from '@/lib/email/template.mjs'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 import { sendNewsletterToUser } from '@/lib/newsletter/delivery.mjs'
 

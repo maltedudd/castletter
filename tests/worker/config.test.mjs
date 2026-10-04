@@ -54,3 +54,27 @@ test('rejects non-positive or non-integer numbers', () => {
   assert.throws(() => loadWorkerConfig({ ...REQUIRED, TRANSCRIPTION_MAX_ATTEMPTS: '0' }), /TRANSCRIPTION_MAX_ATTEMPTS/)
   assert.throws(() => loadWorkerConfig({ ...REQUIRED, TRANSCRIPTION_POLL_INTERVAL_SECONDS: 'abc' }), /POLL_INTERVAL/)
 })
+
+test('newsletter pipeline is off unless explicitly enabled', () => {
+  assert.equal(loadWorkerConfig({ ...REQUIRED, RESEND_API_KEY: 're' }).newsletters, null)
+})
+
+test('enabled newsletter pipeline requires RESEND_API_KEY and APP_URL', () => {
+  assert.throws(
+    () => loadWorkerConfig({ ...REQUIRED, WORKER_NEWSLETTERS_ENABLED: 'true' }),
+    (err) => err.message === 'Fehlende Umgebungsvariablen: RESEND_API_KEY, APP_URL'
+  )
+
+  const config = loadWorkerConfig({
+    ...REQUIRED,
+    WORKER_NEWSLETTERS_ENABLED: 'true',
+    RESEND_API_KEY: 're',
+    NEXT_PUBLIC_APP_URL: 'https://castletter.example/',
+  })
+  assert.deepEqual(config.newsletters, {
+    resendApiKey: 're',
+    fromEmail: 'Castletter <newsletter@castletter.app>',
+    settingsUrl: 'https://castletter.example/settings',
+  })
+  assert.equal(config.openrouter.newsletterModel, 'google/gemini-2.5-flash')
+})

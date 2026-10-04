@@ -2,7 +2,7 @@
   "name": "castletter-transcription-worker",
   "version": "1.0.0",
   "private": true,
-  "description": "Polls Supabase for pending episodes and transcribes them without the Vercel time limit",
+  "description": "Polls Supabase for pending episodes, transcribes them and runs the newsletter pipeline without the Vercel time limit",
   "engines": {
     "node": ">=22"
   },
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.90.1",
-    "openai": "6.18.0"
+    "openai": "6.18.0",
+    "resend": "6.9.1"
   }
 }
