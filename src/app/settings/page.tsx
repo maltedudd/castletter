@@ -12,10 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { localHourToUTC, utcHourToLocal, getHourOptions, getTimezoneName } from '@/lib/utils/timezone'
-
-type DeliveryMode = 'daily' | 'immediate'
 
 export default function SettingsPage() {
   const { user, loading: authLoading } = useAuth()
@@ -25,7 +22,6 @@ export default function SettingsPage() {
 
   const [email, setEmail] = useState('')
   const [deliveryHour, setDeliveryHour] = useState(8) // Default: 8:00 AM local time
-  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('daily')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +39,7 @@ export default function SettingsPage() {
       try {
         const { data, error } = await supabase
           .from('user_settings')
-          .select('newsletter_email, newsletter_delivery_hour, newsletter_delivery_mode')
+          .select('newsletter_email, newsletter_delivery_hour')
           .eq('user_id', currentUser.id)
           .single()
 
@@ -57,7 +53,6 @@ export default function SettingsPage() {
           // Convert UTC hour to local hour for display
           setEmail(data.newsletter_email)
           setDeliveryHour(utcHourToLocal(data.newsletter_delivery_hour))
-          setDeliveryMode(data.newsletter_delivery_mode === 'immediate' ? 'immediate' : 'daily')
         } else {
           // First time: use login email as default
           setEmail(currentUser.email || '')
@@ -110,7 +105,6 @@ export default function SettingsPage() {
           user_id: user.id,
           newsletter_email: email,
           newsletter_delivery_hour: utcHour,
-          newsletter_delivery_mode: deliveryMode,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' })
 
@@ -208,59 +202,37 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              {/* Delivery Mode */}
+              {/* Delivery Time (daily newsletter) */}
               <div className="space-y-3">
-                <Label className="text-base font-medium">{t('deliveryModeLabel')}</Label>
-                <RadioGroup
-                  value={deliveryMode}
-                  onValueChange={(value) => setDeliveryMode(value === 'immediate' ? 'immediate' : 'daily')}
+                <Label htmlFor="delivery-hour" className="text-base font-medium">
+                  {t('deliveryTimeLabel')}
+                </Label>
+                <Select
+                  value={deliveryHour.toString()}
+                  onValueChange={(value) => setDeliveryHour(parseInt(value))}
                   disabled={saving}
-                  className="gap-3"
                 >
-                  <div className="flex items-start gap-3">
-                    <RadioGroupItem value="daily" id="delivery-mode-daily" className="mt-1" />
-                    <Label htmlFor="delivery-mode-daily" className="font-normal leading-snug cursor-pointer">
-                      <span className="block font-medium">{t('deliveryModeDaily')}</span>
-                      <span className="block text-sm text-muted-foreground">{t('deliveryModeDailyHint')}</span>
-                    </Label>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <RadioGroupItem value="immediate" id="delivery-mode-immediate" className="mt-1" />
-                    <Label htmlFor="delivery-mode-immediate" className="font-normal leading-snug cursor-pointer">
-                      <span className="block font-medium">{t('deliveryModeImmediate')}</span>
-                      <span className="block text-sm text-muted-foreground">{t('deliveryModeImmediateHint')}</span>
-                    </Label>
-                  </div>
-                </RadioGroup>
+                  <SelectTrigger id="delivery-hour" className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {hourOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value.toString()}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-sm text-muted-foreground">
+                  {t('timezoneHint', { timezone: timezoneName })}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {t('deliveryModePerPodcastHint')}{' '}
+                  <Link href="/subscriptions" className="underline hover:text-primary">
+                    {t('deliveryModePerPodcastLink')}
+                  </Link>
+                </p>
               </div>
-
-              {/* Delivery Time (daily digest only) */}
-              {deliveryMode === 'daily' && (
-                <div className="space-y-3">
-                  <Label htmlFor="delivery-hour" className="text-base font-medium">
-                    {t('deliveryTimeLabel')}
-                  </Label>
-                  <Select
-                    value={deliveryHour.toString()}
-                    onValueChange={(value) => setDeliveryHour(parseInt(value))}
-                    disabled={saving}
-                  >
-                    <SelectTrigger id="delivery-hour" className="h-11">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {hourOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value.toString()}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-sm text-muted-foreground">
-                    {t('timezoneHint', { timezone: timezoneName })}
-                  </p>
-                </div>
-              )}
 
               {/* Save Button */}
               <div className="pt-4">

@@ -10,6 +10,7 @@ export interface UserSettings {
   user_id: string
   newsletter_email: string
   newsletter_delivery_hour: number // 0-23 (UTC), used for the daily digest
+  /** @deprecated delivery mode is chosen per podcast (podcast_subscriptions.delivery_mode) */
   newsletter_delivery_mode: NewsletterDeliveryMode
   created_at: string
   updated_at: string
@@ -39,6 +40,7 @@ export interface PodcastSubscription {
   title: string
   description: string | null
   cover_image_url: string | null
+  delivery_mode: NewsletterDeliveryMode
   created_at: string
   updated_at: string
 }
@@ -49,6 +51,7 @@ export interface PodcastSubscriptionInsert {
   title: string
   description?: string | null
   cover_image_url?: string | null
+  delivery_mode?: NewsletterDeliveryMode
 }
 
 /** Parsed podcast metadata returned by the /api/podcasts/validate endpoint */

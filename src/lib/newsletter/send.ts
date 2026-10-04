@@ -8,12 +8,9 @@ import { sendNewsletterToUser } from '@/lib/newsletter/delivery.mjs'
 const FROM_EMAIL = process.env.FROM_EMAIL || 'Castletter <newsletter@castletter.app>'
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
-export type DeliveryMode = 'daily' | 'immediate'
-
 export interface NewsletterRecipient {
   user_id: string
   newsletter_email: string
-  newsletter_delivery_mode: DeliveryMode | null
 }
 
 type NewsletterItem = Parameters<typeof generateEmailPlainText>[0][number]
@@ -35,18 +32,18 @@ export function createResendMailer(resend: Resend) {
   }
 }
 
-/** Sends a user's ready newsletters per their delivery mode (see delivery.mjs). */
+/** Sends a user's ready newsletters per podcast delivery mode (see delivery.mjs). */
 export function deliverNewsletters(
   supabase: ReturnType<typeof createAdminClient>,
   resend: Resend,
   user: NewsletterRecipient,
-  episodeIds?: string[]
+  { includeDaily }: { includeDaily: boolean }
 ): Promise<{ mailsSent: number; episodesSent: number }> {
   return sendNewsletterToUser({
     supabase,
     user,
     sendEmail: createResendMailer(resend),
     recentCutoff: getRecentEpisodeCutoff(),
-    episodeIds,
+    includeDaily,
   })
 }
