@@ -7,3 +7,4 @@
 !src/lib/transcription/*.mjs
 !src/lib/newsletter/*.mjs
 !src/lib/email/*.mjs
+!src/lib/feeds/*.mjs

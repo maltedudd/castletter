@@ -25,14 +25,18 @@ export function makeFakeSupabase(tables, hooks = {}) {
 
       if (kind === 'insert' || kind === 'upsert') {
         const inserted = []
+        const conflictColumns = options.onConflict ? options.onConflict.split(',').map((c) => c.trim()) : []
         for (const record of [].concat(payload)) {
-          const conflict = options.onConflict
-          const existing = conflict ? rows.find((row) => row[conflict] === record[conflict]) : null
-          if (existing && kind === 'upsert') {
+          const existing = conflictColumns.length
+            ? rows.find((row) => conflictColumns.every((c) => row[c] === record[c]))
+            : null
+          if (existing && kind === 'upsert' && options.ignoreDuplicates) {
+            continue
+          } else if (existing && kind === 'upsert') {
             Object.assign(existing, record)
             inserted.push(existing)
           } else if (existing) {
-            return { data: null, error: { message: `duplicate key value violates unique constraint (${conflict})` } }
+            return { data: null, error: { message: `duplicate key value violates unique constraint (${options.onConflict})` } }
           } else {
             const row = { id: record.id ?? `${table}-${rows.length + 1}`, ...record }
             rows.push(row)

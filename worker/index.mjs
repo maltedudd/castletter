@@ -1,14 +1,16 @@
-// Castletter worker: polls Supabase for pending episodes and transcribes them completely,
-// then (if enabled) generates their newsletters and sends them — without the Vercel
-// function time limit.
+// Castletter worker: (if enabled) imports new episodes from the podcast feeds, polls
+// Supabase for pending episodes and transcribes them completely, then (if enabled)
+// generates their newsletters and sends them — without the Vercel function time limit.
 
 import { writeFile } from 'node:fs/promises'
 import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
 import { Resend } from 'resend'
+import Parser from 'rss-parser'
 import { loadWorkerConfig } from './config.mjs'
 import { runOnce, releaseClaim } from './worker-core.mjs'
 import { runGenerationOnce, runSendSweep, createHourlyGate } from './newsletter-jobs.mjs'
+import { runFeedCheck, createIntervalGate } from './feed-jobs.mjs'
 import { generateEmailHTML, generateEmailPlainText } from '../src/lib/email/template.mjs'
 import {
   createOpenRouterChunkTranscriber,
@@ -64,6 +66,10 @@ async function main() {
     now: () => new Date(),
     log,
     openrouter,
+    parseXml: (() => {
+      const parser = new Parser()
+      return (xml) => parser.parseString(xml)
+    })(),
     sendEmail: config.newsletters ? createMailer(config.newsletters) : null,
     transcribeEpisodeAudio: (episode, onChunkTranscribed) =>
       transcribeAudioFromUrl({
@@ -104,11 +110,13 @@ async function main() {
     pollIntervalSeconds: config.pollIntervalMs / 1000,
     maxEpisodeAgeDays: config.maxEpisodeAgeDays,
     maxAttempts: config.maxAttempts,
+    feedCheckIntervalMinutes: config.feedCheckIntervalMs ? config.feedCheckIntervalMs / 60_000 : null,
     newsletters: Boolean(config.newsletters),
     newsletterModel: config.newsletters ? config.openrouter.newsletterModel : undefined,
   })
 
   const sendSweep = createHourlyGate()
+  const feedCheck = config.feedCheckIntervalMs ? createIntervalGate(config.feedCheckIntervalMs) : null
 
   // One pass of the pipeline; each stage is isolated so a failure in one does not block
   // the others. Returns whether any stage did work (then the loop continues immediately).
@@ -122,6 +130,16 @@ async function main() {
         return null
       }
     }
+
+    const feedCheckAt = deps.now()
+    if (feedCheck?.isDue(feedCheckAt)) {
+      const summary = await stage('feeds', () => runFeedCheck(deps))
+      if (summary) {
+        feedCheck.markDone(feedCheckAt)
+        worked = summary.newEpisodes > 0 || worked
+      }
+    }
+    if (stopping) return worked
 
     worked = (await stage('transcription', () => runOnce(deps, state)))?.worked || worked
     if (stopping || !config.newsletters) return worked
