@@ -37,6 +37,9 @@ const strings = {
     headerTagline: 'Deine täglichen Podcast-Highlights',
     greeting: 'Hallo,',
     greetingBody: 'hier sind deine neuen Podcast-Zusammenfassungen:',
+    immediateSubject: 'Neue Folge',
+    immediateHeaderTagline: 'Neue Folge, frisch zusammengefasst',
+    immediateGreetingBody: (podcast) => `gerade ist eine neue Folge von „${podcast}“ erschienen. Hier ist deine Zusammenfassung:`,
     footerSentTo: (email) => `Diese Email wurde an ${email} gesendet.`,
     footerChangeSettings: 'Einstellungen ändern',
     sectionTopics: 'Hauptthemen',
@@ -53,6 +56,9 @@ const strings = {
     headerTagline: 'Your daily podcast highlights',
     greeting: 'Hello,',
     greetingBody: 'here are your new podcast summaries:',
+    immediateSubject: 'New episode',
+    immediateHeaderTagline: 'New episode, freshly summarized',
+    immediateGreetingBody: (podcast) => `a new episode of “${podcast}” just came out. Here is your summary:`,
     footerSentTo: (email) => `This email was sent to ${email}.`,
     footerChangeSettings: 'Change settings',
     sectionTopics: 'Main topics',
@@ -70,13 +76,32 @@ export function getEmailSubject(locale = 'de') {
   return strings[locale].subject
 }
 
+/**
+ * Title, header tagline and greeting text for the mail kind: the daily digest keeps the
+ * "daily highlights" wording, an immediate mail (exactly one episode) announces the new
+ * episode instead. Texts are raw; callers escape them for HTML.
+ */
+function getIntro(s, newsletters, mode) {
+  if (mode === 'immediate' && newsletters.length === 1) {
+    const podcast = newsletters[0].podcastTitle
+    return {
+      title: `${s.immediateSubject}: ${podcast}`,
+      tagline: s.immediateHeaderTagline,
+      body: s.immediateGreetingBody(podcast),
+    }
+  }
+  return { title: s.subject, tagline: s.headerTagline, body: s.greetingBody }
+}
+
 export function generateEmailHTML(
   userEmail,
   newsletters,
   settingsUrl,
-  locale = 'de'
+  locale = 'de',
+  mode = 'daily'
 ) {
   const s = strings[locale]
+  const intro = getIntro(s, newsletters, mode)
   const episodeBlocks = newsletters
     .map((item) => generateEpisodeBlock(item, s))
     .join('')
@@ -86,7 +111,7 @@ export function generateEmailHTML(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${s.subject}</title>
+  <title>${escapeHtml(intro.title)}</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #f9f9f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
   <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: ${COLORS.bg};">
@@ -95,7 +120,7 @@ export function generateEmailHTML(
     <tr>
       <td style="padding: 40px 30px 20px; text-align: center; background-color: ${COLORS.primary};">
         <h1 style="margin: 0; color: ${COLORS.bg}; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Castletter</h1>
-        <p style="margin: 8px 0 0; color: ${COLORS.muted}; font-size: 14px;">${s.headerTagline}</p>
+        <p style="margin: 8px 0 0; color: ${COLORS.muted}; font-size: 14px;">${escapeHtml(intro.tagline)}</p>
       </td>
     </tr>
 
@@ -103,7 +128,7 @@ export function generateEmailHTML(
     <tr>
       <td style="padding: 30px 30px 10px;">
         <p style="margin: 0; color: ${COLORS.primary}; font-size: 16px; line-height: 1.6;">
-          ${s.greeting}<br>${s.greetingBody}
+          ${s.greeting}<br>${escapeHtml(intro.body)}
         </p>
       </td>
     </tr>
@@ -199,9 +224,11 @@ function generateEpisodeBlock(item, s) {
 export function generateEmailPlainText(
   newsletters,
   settingsUrl,
-  locale = 'de'
+  locale = 'de',
+  mode = 'daily'
 ) {
   const s = strings[locale]
+  const intro = getIntro(s, newsletters, mode)
 
   const blocks = newsletters.map((item) => {
     const sections = []
@@ -254,11 +281,11 @@ export function generateEmailPlainText(
     return sections.join('\n')
   })
 
-  return `${s.subject}
+  return `${intro.title}
 ===========================
 
 ${s.greeting}
-${s.greetingBody}
+${intro.body}
 
 ${blocks.join('\n\n')}
 ---

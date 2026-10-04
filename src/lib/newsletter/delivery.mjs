@@ -105,7 +105,8 @@ function toNewsletterItem(episode, podcastTitle) {
  * to specific episodes (the immediate send right after generation). Only episodes this call
  * claimed are mailed; a failed send releases its claim and rethrows.
  *
- * `sendEmail({ to, subject, items })` must throw if the mail was not accepted.
+ * `sendEmail({ to, subject, items, mode })` must throw if the mail was not accepted; `mode`
+ * ('immediate' | 'daily') selects the mail's introduction text.
  */
 export async function sendNewsletterToUser({
   supabase, user, sendEmail, now = new Date(), recentCutoff, episodeIds = null, includeDaily = false,
@@ -150,7 +151,12 @@ export async function sendNewsletterToUser({
     const ids = claimed.map((episode) => episode.id)
 
     try {
-      await sendEmail({ to: user.newsletter_email, subject: buildNewsletterSubject(items, batch.mode), items })
+      await sendEmail({
+        to: user.newsletter_email,
+        subject: buildNewsletterSubject(items, batch.mode),
+        items,
+        mode: batch.mode,
+      })
     } catch (err) {
       await releaseEpisodes(supabase, ids)
       throw err

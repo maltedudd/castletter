@@ -93,6 +93,7 @@ test('daily podcasts: one digest in the delivery hour, then marked sent', async 
   assert.deepEqual(result, { mailsSent: 1, episodesSent: 2 })
   assert.equal(mails[0].to, 'malte@example.com')
   assert.equal(mails[0].subject, 'Deine neuen Podcast-Updates (2 Episoden)')
+  assert.equal(mails[0].mode, 'daily')
   assert.deepEqual(mails[0].items.map((i) => [i.podcastTitle, i.episodeTitle, i.intro]), [
     ['Lage der Nation', 'Episode a', 'intro a'],
     ['Lage der Nation', 'Episode b', 'intro b'],
@@ -125,6 +126,7 @@ test('immediate podcasts: one mail per episode, regardless of the hour', async (
 
   assert.deepEqual(result, { mailsSent: 2, episodesSent: 2 })
   assert.deepEqual(mails.map((m) => m.subject), ['Hotel Matze: Episode x', 'Hotel Matze: Episode y'])
+  assert.ok(mails.every((m) => m.mode === 'immediate'))
 })
 
 test('mixed podcasts: immediate episodes go out singly, daily ones only in the digest', async () => {

@@ -18,13 +18,23 @@ type NewsletterItem = Parameters<typeof generateEmailPlainText>[0][number]
 export function createResendMailer(resend: Resend) {
   const settingsUrl = `${APP_URL}/settings`
 
-  return async function sendEmail({ to, subject, items }: { to: string; subject: string; items: NewsletterItem[] }) {
+  return async function sendEmail({
+    to,
+    subject,
+    items,
+    mode,
+  }: {
+    to: string
+    subject: string
+    items: NewsletterItem[]
+    mode: 'daily' | 'immediate'
+  }) {
     const { error } = await resend.emails.send({
       from: FROM_EMAIL,
       to,
       subject,
-      html: generateEmailHTML(to, items, settingsUrl),
-      text: generateEmailPlainText(items, settingsUrl),
+      html: generateEmailHTML(to, items, settingsUrl, 'de', mode),
+      text: generateEmailPlainText(items, settingsUrl, 'de', mode),
     })
     if (error) {
       throw new Error(`Resend error: ${error.message}`)
