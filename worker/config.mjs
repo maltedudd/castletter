@@ -7,6 +7,7 @@ export const DEFAULTS = {
   downloadTimeoutSeconds: 120,
   heartbeatFile: '/tmp/castletter-worker-heartbeat',
   fromEmail: 'Castletter <newsletter@castletter.app>',
+  feedCheckIntervalMinutes: 30,
 }
 
 /**
@@ -44,6 +45,10 @@ export function loadWorkerConfig(env = process.env) {
     downloadTimeoutMs: positiveInt(env, 'TRANSCRIPTION_DOWNLOAD_TIMEOUT_SECONDS', DEFAULTS.downloadTimeoutSeconds) * 1000,
     heartbeatFile: env.TRANSCRIPTION_HEARTBEAT_FILE || DEFAULTS.heartbeatFile,
     heartbeatUrl: env.TRANSCRIPTION_HEARTBEAT_URL || null,
+    // Feed check (replaces the check-new-episodes cron) is opt-in as well.
+    feedCheckIntervalMs: env.WORKER_FEED_CHECK_ENABLED === 'true'
+      ? positiveInt(env, 'FEED_CHECK_INTERVAL_MINUTES', DEFAULTS.feedCheckIntervalMinutes) * 60 * 1000
+      : null,
     newsletters: newslettersEnabled
       ? {
           resendApiKey: env.RESEND_API_KEY,

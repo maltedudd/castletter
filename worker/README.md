@@ -1,9 +1,10 @@
 # Castletter Worker
 
 Eigenständiger Docker-Worker, der Podcast-Episoden ohne das Zeitlimit von Vercel
-transkribiert und – wenn zugeschaltet – die Newsletter erzeugt und verschickt. Er ersetzt
-die Cron-Aufrufe von `/api/cron/transcribe-episodes`, `/api/cron/generate-newsletters`
-und `/api/cron/send-newsletters`.
+transkribiert und – wenn zugeschaltet – neue Episoden aus den Feeds holt sowie die
+Newsletter erzeugt und verschickt. Er ersetzt die Cron-Aufrufe von
+`/api/cron/check-new-episodes`, `/api/cron/transcribe-episodes`,
+`/api/cron/generate-newsletters` und `/api/cron/send-newsletters`.
 
 ## Ablauf
 
@@ -25,7 +26,19 @@ Fehler:
   „Temporärer Fehler (Versuch n/max)“.
 - Nach `TRANSCRIPTION_MAX_ATTEMPTS` Versuchen → `failed` mit dem letzten Fehlertext.
 
-Der Worker braucht nur ausgehende Verbindungen (Supabase, OpenRouter, Audio-Hosts, Resend).
+Der Worker braucht nur ausgehende Verbindungen (Supabase, OpenRouter, Podcast-Feeds und Audio-Hosts, Resend).
+
+## Feed-Check (`WORKER_FEED_CHECK_ENABLED=true`)
+
+Beim Start und danach alle `FEED_CHECK_INTERVAL_MINUTES` (Standard 30) liest der Worker
+alle Abo-Feeds und legt neue Episoden als `pending_transcription` an (gleiche Regeln wie
+bisher: nur mit Audio, nach Abo-Start bzw. max. 30 Tage zurück, max. 50 je Feed). Jeder
+Feed wird in `feed_check_logs` protokolliert. Ein fehlgeschlagener Lauf wird beim nächsten
+Durchlauf wiederholt; neue Episoden werden direkt danach transkribiert.
+
+Umschalten: in Vercel `FEED_CHECK_CRON_DISABLED=true` setzen und neu deployen, den Job für
+`/api/cron/check-new-episodes` auf cron-job.org deaktivieren, dann in `worker/.env`
+`WORKER_FEED_CHECK_ENABLED=true` setzen und `docker compose up -d --build`.
 
 ## Newsletter-Pipeline (`WORKER_NEWSLETTERS_ENABLED=true`)
 

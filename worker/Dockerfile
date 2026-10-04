@@ -12,6 +12,7 @@ COPY src/lib/cron /app/src/lib/cron
 COPY src/lib/transcription /app/src/lib/transcription
 COPY src/lib/newsletter/*.mjs /app/src/lib/newsletter/
 COPY src/lib/email/*.mjs /app/src/lib/email/
+COPY src/lib/feeds/*.mjs /app/src/lib/feeds/
 COPY worker/*.mjs ./
 
 USER node

@@ -78,3 +78,13 @@ test('enabled newsletter pipeline requires RESEND_API_KEY and APP_URL', () => {
   })
   assert.equal(config.openrouter.newsletterModel, 'google/gemini-2.5-flash')
 })
+
+test('feed check is off by default and runs every 30 minutes when enabled', () => {
+  assert.equal(loadWorkerConfig(REQUIRED).feedCheckIntervalMs, null)
+  assert.equal(loadWorkerConfig({ ...REQUIRED, WORKER_FEED_CHECK_ENABLED: 'true' }).feedCheckIntervalMs, 30 * 60 * 1000)
+  assert.equal(
+    loadWorkerConfig({ ...REQUIRED, WORKER_FEED_CHECK_ENABLED: 'true', FEED_CHECK_INTERVAL_MINUTES: '15' }).feedCheckIntervalMs,
+    15 * 60 * 1000
+  )
+  assert.throws(() => loadWorkerConfig({ ...REQUIRED, WORKER_FEED_CHECK_ENABLED: 'true', FEED_CHECK_INTERVAL_MINUTES: '0' }), /FEED_CHECK_INTERVAL_MINUTES/)
+})
