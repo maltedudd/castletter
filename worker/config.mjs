@@ -6,7 +6,7 @@ export const DEFAULTS = {
   maxAttempts: 3,
   downloadTimeoutSeconds: 120,
   heartbeatFile: '/tmp/castletter-worker-heartbeat',
-  fromEmail: 'Castletter <newsletter@castletter.io>',
+  fromEmail: 'castletter.io <newsletter@castletter.io>',
   feedCheckIntervalMinutes: 30,
 }
 

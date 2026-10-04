@@ -51,7 +51,7 @@ export async function POST(request: Request) {
   try {
     const resend = new Resend(process.env.RESEND_API_KEY)
     await resend.emails.send({
-      from: process.env.FROM_EMAIL || 'Castletter <newsletter@castletter.io>',
+      from: process.env.FROM_EMAIL || 'castletter.io <newsletter@castletter.io>',
       to: ADMIN_EMAIL,
       subject: `Neue Beta-Anfrage: ${email}`,
       text: `${email} hat sich für die Castletter-Beta eingetragen.\n\nZum Admin-Bereich: ${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/admin`,

@@ -5,7 +5,7 @@ import { generateEmailHTML, generateEmailPlainText } from '@/lib/email/template.
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
 import { sendNewsletterToUser } from '@/lib/newsletter/delivery.mjs'
 
-const FROM_EMAIL = process.env.FROM_EMAIL || 'Castletter <newsletter@castletter.io>'
+const FROM_EMAIL = process.env.FROM_EMAIL || 'castletter.io <newsletter@castletter.io>'
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
 export interface NewsletterRecipient {
