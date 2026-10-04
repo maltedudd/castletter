@@ -73,7 +73,7 @@ test('enabled newsletter pipeline requires RESEND_API_KEY and APP_URL', () => {
   })
   assert.deepEqual(config.newsletters, {
     resendApiKey: 're',
-    fromEmail: 'Castletter <newsletter@castletter.app>',
+    fromEmail: 'Castletter <newsletter@castletter.io>',
     settingsUrl: 'https://castletter.example/settings',
   })
   assert.equal(config.openrouter.newsletterModel, 'google/gemini-2.5-flash')
