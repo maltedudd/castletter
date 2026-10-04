@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { PodcastSubscription, PodcastFeedMeta } from '@/types/database'
+import type { PodcastSubscription, PodcastFeedMeta, NewsletterDeliveryMode } from '@/types/database'
 
 // ─── Add Podcast Form ────────────────────────────────────────────────
 
@@ -198,10 +199,15 @@ function AddPodcastForm({ onSubscribed }: { onSubscribed: () => void }) {
 function PodcastCard({
   podcast,
   onDelete,
+  onDeliveryModeChange,
 }: {
   podcast: PodcastSubscription
   onDelete: (podcast: PodcastSubscription) => void
+  onDeliveryModeChange: (podcast: PodcastSubscription, mode: NewsletterDeliveryMode) => void
 }) {
+  const t = useTranslations('subscriptions')
+  const selectId = `delivery-mode-${podcast.id}`
+
   return (
     <div className="flex items-center gap-4 py-4">
       {podcast.cover_image_url ? (
@@ -226,6 +232,23 @@ function PodcastCard({
               : podcast.description}
           </p>
         )}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Label htmlFor={selectId} className="text-sm text-muted-foreground font-normal">
+            {t('deliveryModeLabel')}
+          </Label>
+          <Select
+            value={podcast.delivery_mode === 'immediate' ? 'immediate' : 'daily'}
+            onValueChange={(value) => onDeliveryModeChange(podcast, value === 'immediate' ? 'immediate' : 'daily')}
+          >
+            <SelectTrigger id={selectId} className="h-8 w-auto min-w-44 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="daily">{t('deliveryModeDaily')}</SelectItem>
+              <SelectItem value="immediate">{t('deliveryModeImmediate')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
       <Button
         variant="ghost"
@@ -290,6 +313,7 @@ export default function SubscriptionsPage() {
   const [deleteTarget, setDeleteTarget] = useState<PodcastSubscription | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const loadPodcasts = useCallback(async () => {
     if (!user) return
@@ -328,6 +352,25 @@ export default function SubscriptionsPage() {
   function handleSubscribed() {
     setSuccessMessage(t('successSubscribed'))
     loadPodcasts()
+  }
+
+  async function handleDeliveryModeChange(podcast: PodcastSubscription, mode: NewsletterDeliveryMode) {
+    if (podcast.delivery_mode === mode) return
+    setErrorMessage(null)
+    // Optimistic update; reverted if saving fails.
+    setPodcasts((prev) => prev.map((p) => (p.id === podcast.id ? { ...p, delivery_mode: mode } : p)))
+
+    const { error } = await supabase
+      .from('podcast_subscriptions')
+      .update({ delivery_mode: mode })
+      .eq('id', podcast.id)
+
+    if (error) {
+      setPodcasts((prev) => prev.map((p) => (p.id === podcast.id ? { ...p, delivery_mode: podcast.delivery_mode } : p)))
+      setErrorMessage(t('errorSaveDeliveryMode'))
+      return
+    }
+    setSuccessMessage(t(mode === 'immediate' ? 'successDeliveryImmediate' : 'successDeliveryDaily', { title: podcast.title }))
   }
 
   function handleDeleteClick(podcast: PodcastSubscription) {
@@ -388,6 +431,13 @@ export default function SubscriptionsPage() {
           </Alert>
         )}
 
+        {/* Error Message */}
+        {errorMessage && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertDescription>{errorMessage}</AlertDescription>
+          </Alert>
+        )}
+
         {/* Add Podcast Form */}
         <div className="mb-12">
           <AddPodcastForm onSubscribed={handleSubscribed} />
@@ -402,6 +452,9 @@ export default function SubscriptionsPage() {
                 ? t('noPodcasts')
                 : t(podcasts.length === 1 ? 'podcastCount_one' : 'podcastCount_other', { count: podcasts.length })}
             </CardDescription>
+            {podcasts.length > 0 && (
+              <p className="text-sm text-muted-foreground">{t('deliveryModeHint')}</p>
+            )}
           </CardHeader>
           <CardContent>
             {podcasts.length === 0 ? (
@@ -421,6 +474,7 @@ export default function SubscriptionsPage() {
                     key={podcast.id}
                     podcast={podcast}
                     onDelete={handleDeleteClick}
+                    onDeliveryModeChange={handleDeliveryModeChange}
                   />
                 ))}
               </div>

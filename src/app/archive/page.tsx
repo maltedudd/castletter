@@ -88,7 +88,7 @@ export default function ArchivePage() {
     // Load subscriptions for filter dropdown (only once needed, but simpler here)
     const { data: subs } = await supabase
       .from('podcast_subscriptions')
-      .select('id, title, cover_image_url, user_id, feed_url, description, created_at, updated_at')
+      .select('id, title, cover_image_url, user_id, feed_url, description, delivery_mode, created_at, updated_at')
       .eq('user_id', user.id)
       .order('title', { ascending: true })
 

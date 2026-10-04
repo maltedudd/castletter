@@ -40,13 +40,13 @@ async function pingHeartbeatUrl(config) {
 
 function createMailer({ resendApiKey, fromEmail, settingsUrl }) {
   const resend = new Resend(resendApiKey)
-  return async function sendEmail({ to, subject, items }) {
+  return async function sendEmail({ to, subject, items, mode }) {
     const { error } = await resend.emails.send({
       from: fromEmail,
       to,
       subject,
-      html: generateEmailHTML(to, items, settingsUrl),
-      text: generateEmailPlainText(items, settingsUrl),
+      html: generateEmailHTML(to, items, settingsUrl, 'de', mode),
+      text: generateEmailPlainText(items, settingsUrl, 'de', mode),
     })
     if (error) throw new Error(`Resend error: ${error.message}`)
   }

@@ -27,8 +27,8 @@ function makeDeps(db, overrides = {}) {
 
 function tables({ mode = 'daily', hour = 7, episodes }) {
   return {
-    user_settings: [{ user_id: 'user-1', newsletter_email: 'malte@example.com', newsletter_delivery_mode: mode, newsletter_delivery_hour: hour }],
-    podcast_subscriptions: [{ id: 'sub-1', title: 'Lage der Nation', user_id: 'user-1' }],
+    user_settings: [{ user_id: 'user-1', newsletter_email: 'malte@example.com', newsletter_delivery_hour: hour }],
+    podcast_subscriptions: [{ id: 'sub-1', title: 'Lage der Nation', user_id: 'user-1', delivery_mode: mode }],
     episode_newsletters: [],
     episodes,
   }
@@ -79,7 +79,7 @@ test('generation picks the oldest transcribed episode inside the cutoff (not onl
   assert.equal(deps.mails.length, 0, 'daily users get no immediate mail')
 })
 
-test('generation mails immediately for users with immediate delivery', async () => {
+test('generation mails immediately for podcasts with immediate delivery', async () => {
   const db = makeFakeSupabase(tables({ mode: 'immediate', episodes: [transcribed('ep', 1)] }))
   withNewsletterJoin(db)
   const deps = makeDeps(db)
@@ -123,22 +123,22 @@ test('send sweep mails the daily digest in the user\'s hour, including episodes 
 
   const summary = await runSendSweep(deps)
 
-  assert.deepEqual(summary, { usersDue: 1, mailsSent: 1, episodesSent: 2, errors: 0, staleSendingReset: 0 })
+  assert.deepEqual(summary, { users: 1, dailyDue: 1, mailsSent: 1, episodesSent: 2, errors: 0, staleSendingReset: 0 })
   assert.equal(deps.mails[0].subject, 'Deine neuen Podcast-Updates (2 Episoden)')
 })
 
-test('send sweep skips daily users outside their hour', async () => {
+test('send sweep keeps daily podcasts for later outside the delivery hour', async () => {
   const db = makeFakeSupabase(tables({ hour: 9, episodes: [readyEpisode('a', 1)] }))
   const deps = makeDeps(db)
 
   const summary = await runSendSweep(deps)
 
-  assert.equal(summary.usersDue, 0)
+  assert.equal(summary.dailyDue, 0)
   assert.equal(deps.mails.length, 0)
   assert.equal(db.data.episodes[0].status, 'newsletter_ready')
 })
 
-test('send sweep serves immediate users every hour as fallback', async () => {
+test('send sweep serves immediate podcasts every hour as fallback', async () => {
   const db = makeFakeSupabase(tables({ mode: 'immediate', hour: 3, episodes: [readyEpisode('a', 1), readyEpisode('b', 2)] }))
   const deps = makeDeps(db)
 
@@ -168,4 +168,23 @@ test('hourly gate is due once per UTC hour and only after markDone', () => {
   gate.markDone(at('2026-10-04T07:01:05Z'))
   assert.equal(gate.isDue(at('2026-10-04T07:59:59Z')), false)
   assert.equal(gate.isDue(at('2026-10-04T08:00:00Z')), true)
+})
+
+test('send sweep with mixed podcasts: immediate always, daily digest only in the hour', async () => {
+  const db = makeFakeSupabase({
+    user_settings: [{ user_id: 'user-1', newsletter_email: 'malte@example.com', newsletter_delivery_hour: 9 }],
+    podcast_subscriptions: [
+      { id: 'sub-1', title: 'Lage der Nation', user_id: 'user-1', delivery_mode: 'daily' },
+      { id: 'sub-2', title: 'Hotel Matze', user_id: 'user-1', delivery_mode: 'immediate' },
+    ],
+    episode_newsletters: [],
+    episodes: [readyEpisode('daily', 1), { ...readyEpisode('now', 1), subscription_id: 'sub-2' }],
+  })
+  const deps = makeDeps(db)
+
+  const summary = await runSendSweep(deps)
+
+  assert.equal(summary.dailyDue, 0)
+  assert.deepEqual(deps.mails.map((m) => m.subject), ['Hotel Matze: Episode now'])
+  assert.equal(db.data.episodes.find((e) => e.id === 'daily').status, 'newsletter_ready')
 })

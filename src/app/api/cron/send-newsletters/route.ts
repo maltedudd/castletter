@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isDueForDelivery, resetStaleSendingEpisodes } from '@/lib/newsletter/delivery.mjs'
+import { isDailyDigestDue, resetStaleSendingEpisodes } from '@/lib/newsletter/delivery.mjs'
 import { deliverNewsletters, type NewsletterRecipient } from '@/lib/newsletter/send'
 
 const MAX_USERS_PER_RUN = 100
@@ -32,12 +32,11 @@ export async function GET(request: NextRequest) {
     // Hand back claims of runs that died between claiming and sending.
     const staleSendingReset = await resetStaleSendingEpisodes(supabase)
 
-    // Daily users whose delivery hour matches the current UTC hour, plus immediate users
-    // (fallback for episodes the generate cron could not mail right away).
+    // Every user: episodes of immediate podcasts (fallback for sends the generate cron could
+    // not make), plus the daily digest when their delivery hour matches the current UTC hour.
     const { data: users, error: userError } = await supabase
       .from('user_settings')
-      .select('user_id, newsletter_email, newsletter_delivery_hour, newsletter_delivery_mode')
-      .or(`newsletter_delivery_mode.eq.immediate,newsletter_delivery_hour.eq.${currentHourUTC}`)
+      .select('user_id, newsletter_email, newsletter_delivery_hour')
       .limit(MAX_USERS_PER_RUN)
 
     if (userError || !users) {
@@ -47,22 +46,12 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const dueUsers = users.filter((user) => isDueForDelivery(user, currentHourUTC))
-
-    if (dueUsers.length === 0) {
-      return NextResponse.json({
-        success: true,
-        currentHourUTC,
-        emailsSent: 0,
-        staleSendingReset,
-        message: 'No users scheduled for this hour',
-      })
-    }
-
     // Process each user
-    for (const user of dueUsers) {
+    for (const user of users) {
       try {
-        const { mailsSent } = await deliverNewsletters(supabase, resend, user as NewsletterRecipient)
+        const { mailsSent } = await deliverNewsletters(supabase, resend, user as NewsletterRecipient, {
+          includeDaily: isDailyDigestDue(user, currentHourUTC),
+        })
         emailsSent += mailsSent
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown'
@@ -75,7 +64,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       currentHourUTC,
-      usersChecked: dueUsers.length,
+      usersChecked: users.length,
       emailsSent,
       staleSendingReset,
       errors,

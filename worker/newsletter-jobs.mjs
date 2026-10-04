@@ -9,7 +9,7 @@ import {
 } from '../src/lib/newsletter/generate.mjs'
 import {
   deliverImmediatelyIfWanted,
-  isDueForDelivery,
+  isDailyDigestDue,
   resetStaleSendingEpisodes,
   sendNewsletterToUser,
 } from '../src/lib/newsletter/delivery.mjs'
@@ -20,7 +20,7 @@ const GENERATION_COLUMNS =
 
 /**
  * Generates the newsletter for the oldest `transcribed` episode inside the age cutoff and
- * mails it right away to owners with immediate delivery. Returns `{ worked }` so the loop
+ * mails it right away if its podcast is set to immediate delivery. Returns `{ worked }` so the loop
  * keeps going while there is a backlog.
  */
 export async function runGenerationOnce(deps) {
@@ -77,9 +77,9 @@ export async function runGenerationOnce(deps) {
 }
 
 /**
- * Daily digests for users whose UTC hour has come, plus a fallback for immediate users whose
- * newsletter could not be mailed right after generation. Errors for one user do not stop
- * the others.
+ * For every user: episodes of immediate podcasts that could not be mailed right after
+ * generation (fallback), plus the digest of their daily podcasts once their UTC delivery
+ * hour has come. Errors for one user do not stop the others.
  */
 export async function runSendSweep(deps) {
   const { supabase, config, now, log, sendEmail } = deps
@@ -90,14 +90,18 @@ export async function runSendSweep(deps) {
 
   const { data: users, error } = await supabase
     .from('user_settings')
-    .select('user_id, newsletter_email, newsletter_delivery_hour, newsletter_delivery_mode')
+    .select('user_id, newsletter_email, newsletter_delivery_hour')
   if (error) throw new Error(`Einstellungen konnten nicht gelesen werden: ${error.message}`)
 
-  const summary = { usersDue: 0, mailsSent: 0, episodesSent: 0, errors: 0, staleSendingReset }
-  for (const user of (users ?? []).filter((u) => isDueForDelivery(u, currentHourUTC))) {
-    summary.usersDue++
+  const summary = { users: 0, dailyDue: 0, mailsSent: 0, episodesSent: 0, errors: 0, staleSendingReset }
+  for (const user of users ?? []) {
+    const includeDaily = isDailyDigestDue(user, currentHourUTC)
+    summary.users++
+    if (includeDaily) summary.dailyDue++
     try {
-      const result = await sendNewsletterToUser({ supabase, user, sendEmail, now: now(), recentCutoff: cutoff })
+      const result = await sendNewsletterToUser({
+        supabase, user, sendEmail, now: now(), recentCutoff: cutoff, includeDaily,
+      })
       summary.mailsSent += result.mailsSent
       summary.episodesSent += result.episodesSent
     } catch (err) {
