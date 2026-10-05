@@ -53,8 +53,12 @@ umbenennen, auf „Sofort“/„Täglich“ stellen, deaktivieren und löschen.
    Channel-ID gebaut). Jedes Video wird höchstens einmal als Episode angelegt
    (`guid = yt:video:<videoId>`, Unique-Index auf `(subscription_id, youtube_video_id)`),
    mit denselben Regeln wie bei Podcasts (nach Abo-Start bzw. max. 30 Tage, max. 50 je
-   Lauf). Ergebnis und Fehler stehen in `feed_check_logs` und direkt am Kanal
-   (`last_checked_at`, `last_check_status`, `last_check_error`).
+   Lauf). **Shorts werden nie importiert:** Der Feed kennzeichnet sie nicht, daher wird je
+   neuem Video `https://www.youtube.com/shorts/<id>` per HEAD geprüft (200 = Short,
+   Weiterleitung auf `/watch` = normales Video). Ist die Prüfung nicht eindeutig (z. B.
+   HTTP 429), wird das Video in diesem Lauf zurückgehalten, am Kanal als Fehler angezeigt und
+   beim nächsten Lauf erneut geprüft. Ergebnis und Fehler stehen in `feed_check_logs` und
+   direkt am Kanal (`last_checked_at`, `last_check_status`, `last_check_error`).
 2. **Transkription** (nur im Worker; die Vercel-Route überspringt YouTube-Episoden):
    - Zuerst vollständige YouTube-Untertitel: manuelle Untertitel (Originalsprache, dann
      `YOUTUBE_CAPTION_LANGUAGES`), sonst automatische Untertitel nur in der gesprochenen
@@ -94,7 +98,7 @@ Konfiguration (optional, Standardwerte):
 - `YOUTUBE_CAPTION_LANGUAGES=de,en` – bevorzugte Untertitelsprachen nach der Originalsprache.
 
 Es werden keine YouTube-Zugangsdaten oder Cookies benötigt oder gespeichert. Grenzen:
-Playlists, Shorts-Filter und nicht öffentliche Videos werden nicht unterstützt.
+Playlists und nicht öffentliche Videos werden nicht unterstützt.
 
 ## Newsletter-Pipeline (`WORKER_NEWSLETTERS_ENABLED=true`)
 

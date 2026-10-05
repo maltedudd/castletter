@@ -6,6 +6,7 @@ import {
   extractChannelIdFromHtml,
   extractChannelMetaFromHtml,
   isYouTubeChannelId,
+  isYouTubeShort,
   parseChannelInput,
   parseYouTubeFeed,
   resolveYouTubeChannel,
@@ -195,4 +196,29 @@ test('resolveYouTubeChannel reports actionable errors', async () => {
   await assert.rejects(resolveYouTubeChannel({ input: '@unbekannt', fetchImpl }), { code: 'channel_not_found' })
   await assert.rejects(resolveYouTubeChannel({ input: '@ohneid', fetchImpl }), { code: 'channel_not_found' })
   await assert.rejects(resolveYouTubeChannel({ input: CHANNEL_ID, fetchImpl }), { code: 'feed_unavailable' })
+})
+
+test('isYouTubeShort: /shorts/<id> answers 200 for Shorts and redirects regular videos to /watch', async () => {
+  const calls = []
+  const respond = (status, location) => async (url, init) => {
+    calls.push({ url, init })
+    return { status, headers: new Headers(location ? { location } : {}) }
+  }
+
+  assert.equal(await isYouTubeShort({ videoId: 'abcDEF12345', fetchImpl: respond(200) }), true)
+  assert.equal(
+    await isYouTubeShort({ videoId: 'abcDEF12345', fetchImpl: respond(303, 'https://www.youtube.com/watch?v=abcDEF12345') }),
+    false
+  )
+  assert.equal(calls[0].url, 'https://www.youtube.com/shorts/abcDEF12345')
+  assert.equal(calls[0].init.method, 'HEAD')
+  assert.equal(calls[0].init.redirect, 'manual')
+  assert.match(calls[0].init.headers.Cookie, /SOCS=/)
+
+  await assert.rejects(isYouTubeShort({ videoId: 'abcDEF12345', fetchImpl: respond(429) }), /HTTP 429/)
+  await assert.rejects(
+    isYouTubeShort({ videoId: 'abcDEF12345', fetchImpl: respond(302, 'https://consent.youtube.com/m?continue=x') }),
+    /HTTP 302/
+  )
+  await assert.rejects(isYouTubeShort({ videoId: '../x', fetchImpl: respond(200) }), /Ungültige YouTube-Video-ID/)
 })

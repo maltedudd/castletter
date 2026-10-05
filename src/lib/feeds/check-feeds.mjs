@@ -4,7 +4,13 @@
 // Fetch, XML parser and Supabase client are injected so the rules run under node:test.
 
 import crypto from 'node:crypto'
-import { buildYouTubeFeedUrl, buildYouTubeWatchUrl, parseYouTubeFeed, YOUTUBE_REQUEST_HEADERS } from '../youtube/channel.mjs'
+import {
+  buildYouTubeFeedUrl,
+  buildYouTubeWatchUrl,
+  isYouTubeShort,
+  parseYouTubeFeed,
+  YOUTUBE_REQUEST_HEADERS,
+} from '../youtube/channel.mjs'
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 export const MAX_NEW_EPISODES_PER_FEED = 50
@@ -132,7 +138,8 @@ async function checkYouTubeChannel({ supabase, fetchImpl, subscription, now }) {
     if (existingError) throw new Error(`Vorhandene Videos konnten nicht gelesen werden: ${existingError.message}`)
     const existingGuids = new Set((existingEpisodes || []).map((e) => e.guid))
 
-    const newVideos = selectNewYouTubeVideos({ entries: feed.entries, subscription, existingGuids, now })
+    const candidates = selectNewYouTubeVideos({ entries: feed.entries, subscription, existingGuids, now })
+    const { videos: newVideos, failures } = await dropShorts(candidates, fetchImpl)
     if (newVideos.length > 0) {
       const { error: insertError } = await supabase
         .from('episodes')
@@ -140,13 +147,18 @@ async function checkYouTubeChannel({ supabase, fetchImpl, subscription, now }) {
       if (insertError) throw new Error(`Insert failed: ${insertError.message}`)
     }
     result = { newEpisodes: newVideos.length }
+    if (failures.length > 0) {
+      // Not inserted, so the next run checks these videos again; nothing is lost.
+      result.error = `Shorts-Prüfung für ${failures.length} ${failures.length === 1 ? 'Video' : 'Videos'} fehlgeschlagen ` +
+        `(${failures[0]}) – sie werden beim nächsten Lauf erneut geprüft`
+    }
   } catch (err) {
     result = { newEpisodes: 0, error: err instanceof Error ? err.message : 'Unknown error' }
   }
 
   await supabase.from('feed_check_logs').insert(
     result.error
-      ? { subscription_id: subscription.id, status: 'error', error_message: result.error }
+      ? { subscription_id: subscription.id, status: 'error', error_message: result.error, episodes_found: result.newEpisodes }
       : { subscription_id: subscription.id, status: 'success', episodes_found: result.newEpisodes }
   )
   await supabase
@@ -159,6 +171,23 @@ async function checkYouTubeChannel({ supabase, fetchImpl, subscription, now }) {
     .eq('id', subscription.id)
 
   return result
+}
+
+/**
+ * Shorts are not newsletter material and are never imported. Checked sequentially (at most
+ * one feed page of new videos per channel); an inconclusive check holds the video back.
+ */
+async function dropShorts(candidates, fetchImpl) {
+  const videos = []
+  const failures = []
+  for (const video of candidates) {
+    try {
+      if (!(await isYouTubeShort({ videoId: video.youtube_video_id, fetchImpl }))) videos.push(video)
+    } catch (err) {
+      failures.push(err instanceof Error ? err.message : String(err))
+    }
+  }
+  return { videos, failures }
 }
 
 /** Picks the channel uploads that should become new `pending_transcription` episodes. */

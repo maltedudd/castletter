@@ -33,13 +33,26 @@ function feedXml(entries, channelId = CHANNEL_ID) {
   return `<feed><yt:channelId>${channelId}</yt:channelId><title>Kanal</title>${body}</feed>`
 }
 
-function deps(db, routes) {
+/**
+ * Fake fetch: feed URLs from `routes`; `/shorts/<id>` answers 200 for IDs in `shorts`, the
+ * status from `shortStatus` if given, otherwise 303 → /watch like a regular video.
+ */
+function deps(db, routes, { shorts = [], shortStatus = {} } = {}) {
   const requested = []
+  const shortChecks = []
   return {
     requested,
+    shortChecks,
     supabase: db,
     now: () => NOW,
     fetchImpl: async (url, init) => {
+      const short = url.match(/^https:\/\/www\.youtube\.com\/shorts\/(.+)$/)
+      if (short) {
+        shortChecks.push({ id: short[1], method: init?.method, redirect: init?.redirect, hasSignal: init?.signal instanceof AbortSignal })
+        const status = shortStatus[short[1]] ?? (shorts.includes(short[1]) ? 200 : 303)
+        const location = status === 303 ? `https://www.youtube.com/watch?v=${short[1]}` : null
+        return { ok: status === 200, status, headers: new Headers(location ? { location } : {}), text: async () => '' }
+      }
       requested.push({ url, hasSignal: init?.signal instanceof AbortSignal })
       const route = routes[url]
       if (route === undefined) return { ok: false, status: 404, text: async () => '' }
@@ -146,6 +159,43 @@ test('feed failures are persisted on the source with an actionable reason', asyn
   assert.match(byId['yt-3'].last_check_error, /gehört zu Kanal UCaaaa/)
   assert.match(byId['yt-4'].last_check_error, /Ungültige YouTube-Channel-ID/)
   assert.ok(db.data.feed_check_logs.every((l) => l.status === 'error'))
+})
+
+test('Shorts are filtered out before ingestion and never become episodes', async () => {
+  const db = makeFakeSupabase({ podcast_subscriptions: [YT_SOURCE], episodes: [], feed_check_logs: [] })
+  const d = deps(db, { [FEED_URL]: feedXml([entry(vid(1), 1), entry(vid(2), 1), entry(vid(3), 2)]) }, { shorts: [vid(2)] })
+
+  const first = await checkAllFeeds(d)
+
+  assert.deepEqual(first, { subscriptionsChecked: 1, newEpisodes: 2, errors: 0 })
+  assert.deepEqual(db.data.episodes.map((e) => e.youtube_video_id).sort(), [vid(1), vid(3)])
+  assert.ok(d.shortChecks.every((c) => c.method === 'HEAD' && c.redirect === 'manual' && c.hasSignal))
+  assert.equal(db.data.podcast_subscriptions[0].last_check_status, 'success')
+
+  // Next run: imported videos are not checked again, the Short is still skipped.
+  d.shortChecks.length = 0
+  assert.equal((await checkAllFeeds(d)).newEpisodes, 0)
+  assert.deepEqual(d.shortChecks.map((c) => c.id), [vid(2)])
+  assert.equal(db.data.episodes.length, 2)
+})
+
+test('an inconclusive Shorts check holds the video back with a visible error and retries next run', async () => {
+  const db = makeFakeSupabase({ podcast_subscriptions: [YT_SOURCE], episodes: [], feed_check_logs: [] })
+  const routes = { [FEED_URL]: feedXml([entry(vid(1), 1), entry(vid(2), 1)]) }
+
+  const blocked = deps(db, routes, { shortStatus: { [vid(2)]: 429 } })
+  const summary = await checkAllFeeds(blocked)
+
+  assert.deepEqual(summary, { subscriptionsChecked: 1, newEpisodes: 1, errors: 1 })
+  assert.deepEqual(db.data.episodes.map((e) => e.youtube_video_id), [vid(1)])
+  const source = db.data.podcast_subscriptions[0]
+  assert.equal(source.last_check_status, 'error')
+  assert.match(source.last_check_error, /Shorts-Prüfung für 1 Video fehlgeschlagen \(HTTP 429\).*nächsten Lauf/)
+  assert.equal(db.data.feed_check_logs[0].status, 'error')
+
+  assert.deepEqual(await checkAllFeeds(deps(db, routes)), { subscriptionsChecked: 1, newEpisodes: 1, errors: 0 })
+  assert.deepEqual(db.data.episodes.map((e) => e.youtube_video_id).sort(), [vid(1), vid(2)])
+  assert.equal(db.data.podcast_subscriptions[0].last_check_status, 'success')
 })
 
 test('disabled sources (podcast or YouTube) are not checked; podcasts keep using the RSS parser', async () => {

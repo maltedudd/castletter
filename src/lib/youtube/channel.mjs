@@ -145,6 +145,27 @@ export async function resolveYouTubeChannel({ input, fetchImpl = fetch }) {
   }
 }
 
+/**
+ * Shorts are not marked in the Atom feed. `/shorts/<id>` serves Shorts directly (200) and
+ * redirects regular videos to `/watch` (303). Any other answer (rate limit, consent page,
+ * deleted video) is inconclusive and throws, so the caller can retry later.
+ */
+export async function isYouTubeShort({ videoId, fetchImpl = fetch }) {
+  if (!isYouTubeVideoId(videoId)) throw new Error(`Ungültige YouTube-Video-ID: ${videoId}`)
+  const response = await fetchImpl(`${YOUTUBE_ORIGIN}/shorts/${videoId}`, {
+    method: 'HEAD',
+    redirect: 'manual',
+    headers: YOUTUBE_REQUEST_HEADERS,
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  })
+  if (response.status === 200) return true
+  const location = response.headers?.get?.('location') ?? ''
+  if (response.status >= 300 && response.status < 400 && /^https:\/\/www\.youtube\.com\/watch\?/.test(location)) {
+    return false
+  }
+  throw new Error(`HTTP ${response.status}`)
+}
+
 /** GET with consent cookies; resolves `null` for 404, throws for other failures. */
 async function fetchYouTubeText(fetchImpl, url) {
   const response = await fetchImpl(url, {

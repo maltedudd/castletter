@@ -156,7 +156,7 @@
     "errorSaveDeliveryMode": "Could not save the delivery setting – please try again",
     "errorUnexpected": "An unexpected error occurred",
     "youtubeAddTitle": "Add YouTube channel",
-    "youtubeAddDescription": "New videos of a public channel are transcribed and summarized just like podcast episodes.",
+    "youtubeAddDescription": "New videos of a public channel are transcribed and summarized just like podcast episodes. Shorts are skipped.",
     "youtubeInputLabel": "Channel ID, channel URL or @handle",
     "youtubeInputPlaceholder": "@channelname or https://www.youtube.com/channel/UC…",
     "youtubeResolveButton": "Check channel",

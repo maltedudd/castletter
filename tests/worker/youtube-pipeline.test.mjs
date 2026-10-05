@@ -18,10 +18,11 @@ const FEED_URL = buildYouTubeFeedUrl(CHANNEL_ID)
 const CAPTIONED = 'captioned01'
 const NO_CAPTIONS = 'nocaption01'
 const GONE = 'removed0001'
+const SHORT = 'shortclip01'
 const MODEL_OUTPUT = '## Zusammenfassung\nKurz.\n\n## Hauptthemen\n- Thema\n\n## Wichtige Aussagen und Erkenntnisse\n- Aussage'
 
 const FEED_XML = `<feed><yt:channelId>${CHANNEL_ID}</yt:channelId><title>Kanal</title>
-  ${[[CAPTIONED, '2026-10-03T08:00:00+00:00'], [NO_CAPTIONS, '2026-10-03T09:00:00+00:00'], [GONE, '2026-10-03T10:00:00+00:00']]
+  ${[[CAPTIONED, '2026-10-03T08:00:00+00:00'], [NO_CAPTIONS, '2026-10-03T09:00:00+00:00'], [GONE, '2026-10-03T10:00:00+00:00'], [SHORT, '2026-10-03T11:00:00+00:00']]
     .map(([id, published]) => `<entry><id>yt:video:${id}</id><yt:videoId>${id}</yt:videoId><title>Video ${id}</title><published>${published}</published></entry>`)
     .join('')}
 </feed>`
@@ -115,6 +116,12 @@ test('YouTube channel source runs through the common pipeline to newsletter_read
     now: () => NOW,
     log: (level, msg, data) => logs.push({ level, msg, ...data }),
     fetchImpl: async (url) => {
+      const short = url.match(/\/shorts\/(.+)$/)
+      if (short) {
+        return short[1] === SHORT
+          ? { status: 200, headers: new Headers() }
+          : { status: 303, headers: new Headers({ location: `https://www.youtube.com/watch?v=${short[1]}` }) }
+      }
       assert.equal(url, FEED_URL)
       return { ok: true, status: 200, text: async () => FEED_XML }
     },
@@ -129,7 +136,7 @@ test('YouTube channel source runs through the common pipeline to newsletter_read
     fetchImpl: async () => assert.fail('YouTube episodes never download audio_url directly'),
   })
 
-  // 1. Feed check, twice: every upload is ingested exactly once.
+  // 1. Feed check, twice: every upload except the Short is ingested exactly once.
   assert.equal((await runFeedCheck(deps)).newEpisodes, 3)
   assert.equal((await runFeedCheck(deps)).newEpisodes, 0)
   assert.equal(db.data.episodes.length, 3)

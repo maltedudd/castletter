@@ -156,7 +156,7 @@
     "errorSaveDeliveryMode": "Fehler beim Speichern der Zustellung – bitte versuche es erneut",
     "errorUnexpected": "Ein unerwarteter Fehler ist aufgetreten",
     "youtubeAddTitle": "YouTube-Kanal hinzufügen",
-    "youtubeAddDescription": "Neue Videos eines öffentlichen Kanals werden transkribiert und wie Podcast-Episoden zusammengefasst.",
+    "youtubeAddDescription": "Neue Videos eines öffentlichen Kanals werden transkribiert und wie Podcast-Episoden zusammengefasst. Shorts werden übersprungen.",
     "youtubeInputLabel": "Channel-ID, Kanal-URL oder @Handle",
     "youtubeInputPlaceholder": "@kanalname oder https://www.youtube.com/channel/UC…",
     "youtubeResolveButton": "Kanal prüfen",
