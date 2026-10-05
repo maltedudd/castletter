@@ -58,10 +58,31 @@ export async function transcribeAudioFromUrl({
     transcript = await transcribeBuffer({ audioBuffer, format, transcribeChunk, onChunkTranscribed })
   }
 
+  return assertSpeech(transcript)
+}
+
+/**
+ * Transcribes an audio file that is already in memory (e.g. YouTube audio extracted to MP3),
+ * with the same all-or-nothing chunking as `transcribeAudioFromUrl`.
+ */
+export async function transcribeAudioBuffer({
+  audioBuffer,
+  contentType = 'audio/mpeg',
+  ext = 'mp3',
+  transcribeChunk,
+  onChunkTranscribed = async () => {},
+}) {
+  if (!audioBuffer || audioBuffer.length === 0) {
+    throw new PermanentError('Audiodatei ist leer')
+  }
+  const transcript = await transcribeBuffer({ audioBuffer, format: { contentType, ext }, transcribeChunk, onChunkTranscribed })
+  return assertSpeech(transcript)
+}
+
+function assertSpeech(transcript) {
   if (!transcript || transcript.trim().length === 0) {
     throw new PermanentError('Keine Sprache erkannt – die Episode enthält möglicherweise nur Musik')
   }
-
   return transcript
 }
 

@@ -31,27 +31,48 @@ export interface UserSettingsUpdate {
   updated_at?: string
 }
 
-// PROJ-2: Podcast Subscriptions
+// PROJ-2: Podcast Subscriptions (Kanban #29: also YouTube channel sources)
+
+export type SourceType = 'podcast' | 'youtube'
 
 export interface PodcastSubscription {
   id: string
   user_id: string
+  source_type: SourceType
+  /** RSS feed for podcasts; for YouTube the channel's Atom feed (built from youtube_channel_id) */
   feed_url: string
+  youtube_channel_id: string | null
   title: string
   description: string | null
   cover_image_url: string | null
   delivery_mode: NewsletterDeliveryMode
+  enabled: boolean
+  last_checked_at: string | null
+  last_check_status: 'success' | 'error' | null
+  last_check_error: string | null
   created_at: string
   updated_at: string
 }
 
 export interface PodcastSubscriptionInsert {
   user_id: string
+  source_type?: SourceType
   feed_url: string
+  youtube_channel_id?: string | null
   title: string
   description?: string | null
   cover_image_url?: string | null
   delivery_mode?: NewsletterDeliveryMode
+  enabled?: boolean
+}
+
+/** Resolved channel returned by the /api/youtube/resolve endpoint */
+export interface YouTubeChannelMeta {
+  channelId: string
+  title: string
+  description: string | null
+  thumbnailUrl: string | null
+  feedUrl: string
 }
 
 /** Parsed podcast metadata returned by the /api/podcasts/validate endpoint */
@@ -75,9 +96,23 @@ export type EpisodeStatus =
   | 'newsletter_failed'
   | 'newsletter_sent'
 
+export type YouTubeErrorCode =
+  | 'video_unavailable'
+  | 'video_not_yet_available'
+  | 'youtube_blocked'
+  | 'youtube_fetch_failed'
+  | 'youtube_tool_missing'
+  | 'audio_download_failed'
+  | 'stt_failed'
+  | 'transcription_failed'
+
 export interface Episode {
   id: string
   subscription_id: string
+  source_type: SourceType
+  youtube_video_id: string | null
+  transcript_source: 'captions' | 'audio_stt' | null
+  error_code: YouTubeErrorCode | null
   guid: string
   title: string
   description: string | null

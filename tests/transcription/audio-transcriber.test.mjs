@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   PermanentError,
   transcribeAudioFromUrl,
+  transcribeAudioBuffer,
   createOpenRouterChunkTranscriber,
   getAudioExtension,
   extractTranscriptText,
@@ -156,6 +157,44 @@ test('large body without content-length is split in memory into ordered chunks',
     [OPENAI_TRANSCRIPTION_MAX_SIZE + 1 - TRANSCRIPTION_CHUNK_TARGET_SIZE, 'm4a'],
   ])
   assert.deepEqual(progress, [{ index: 0, total: 2 }, { index: 1, total: 2 }])
+})
+
+test('transcribeAudioBuffer transcribes an in-memory file completely, in ordered chunks', async () => {
+  const { calls, transcribeChunk } = recordingTranscriber()
+  const progress = []
+
+  const small = await transcribeAudioBuffer({ audioBuffer: Buffer.alloc(10), transcribeChunk })
+  assert.equal(small, 'part-1')
+  assert.deepEqual([calls[0].ext, calls[0].contentType, calls[0].basename], ['mp3', 'audio/mpeg', 'episode'])
+
+  const large = await transcribeAudioBuffer({
+    audioBuffer: Buffer.alloc(OPENAI_TRANSCRIPTION_MAX_SIZE + 1),
+    transcribeChunk,
+    onChunkTranscribed: async (info) => progress.push(info),
+  })
+  assert.equal(large, 'part-2\n\npart-3')
+  assert.deepEqual(progress, [{ index: 0, total: 2 }, { index: 1, total: 2 }])
+})
+
+test('transcribeAudioBuffer never returns a partial transcript and rejects empty input/output', async () => {
+  let n = 0
+  const failingSecondChunk = async () => {
+    n++
+    if (n === 2) throw new Error('OpenRouter 502')
+    return `part-${n}`
+  }
+  await assert.rejects(
+    transcribeAudioBuffer({ audioBuffer: Buffer.alloc(OPENAI_TRANSCRIPTION_MAX_SIZE + 1), transcribeChunk: failingSecondChunk }),
+    (err) => !(err instanceof PermanentError) && /OpenRouter 502/.test(err.message)
+  )
+  await assert.rejects(
+    transcribeAudioBuffer({ audioBuffer: Buffer.alloc(0), transcribeChunk: async () => 'x' }),
+    (err) => err instanceof PermanentError && /leer/.test(err.message)
+  )
+  await assert.rejects(
+    transcribeAudioBuffer({ audioBuffer: Buffer.alloc(10), transcribeChunk: async () => ' ' }),
+    (err) => err instanceof PermanentError && /Keine Sprache erkannt/.test(err.message)
+  )
 })
 
 test('unreachable audio is a permanent error', async () => {

@@ -25,6 +25,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import type { PodcastSubscription, PodcastFeedMeta, NewsletterDeliveryMode } from '@/types/database'
+import { YouTubeChannelsSection } from './YouTubeChannels'
 
 // ─── Add Podcast Form ────────────────────────────────────────────────
 
@@ -281,9 +282,11 @@ function DeletePodcastDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('deleteTitle')}</AlertDialogTitle>
+          <AlertDialogTitle>
+            {t(podcast?.source_type === 'youtube' ? 'youtubeDeleteTitle' : 'deleteTitle')}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            {t('deleteDescription', { title: podcast?.title ?? '' })}
+            {t(podcast?.source_type === 'youtube' ? 'youtubeDeleteDescription' : 'deleteDescription', { title: podcast?.title ?? '' })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -309,6 +312,7 @@ export default function SubscriptionsPage() {
   const t = useTranslations('subscriptions')
 
   const [podcasts, setPodcasts] = useState<PodcastSubscription[]>([])
+  const [channels, setChannels] = useState<PodcastSubscription[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<PodcastSubscription | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -325,7 +329,9 @@ export default function SubscriptionsPage() {
       .order('created_at', { ascending: false })
 
     if (!error && data) {
-      setPodcasts(data)
+      const sources = data as PodcastSubscription[]
+      setPodcasts(sources.filter((s) => s.source_type !== 'youtube'))
+      setChannels(sources.filter((s) => s.source_type === 'youtube'))
     }
     setLoading(false)
   }, [user, supabase])
@@ -387,8 +393,9 @@ export default function SubscriptionsPage() {
       .eq('id', deleteTarget.id)
 
     if (!error) {
-      setSuccessMessage(t('successRemoved'))
+      setSuccessMessage(t(deleteTarget.source_type === 'youtube' ? 'youtubeSuccessRemoved' : 'successRemoved'))
       setPodcasts((prev) => prev.filter((p) => p.id !== deleteTarget.id))
+      setChannels((prev) => prev.filter((p) => p.id !== deleteTarget.id))
     }
 
     setDeleteDialogOpen(false)
@@ -481,6 +488,19 @@ export default function SubscriptionsPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* YouTube Channels */}
+        <div className="mt-12">
+          <YouTubeChannelsSection
+            channels={channels}
+            onChanged={loadPodcasts}
+            onDelete={handleDeleteClick}
+            onMessage={({ success, error }) => {
+              setErrorMessage(error ?? null)
+              if (success) setSuccessMessage(success)
+            }}
+          />
+        </div>
       </div>
 
       {/* Delete Confirmation Dialog */}

@@ -1,11 +1,11 @@
 # Castletter
 
-A newsletter app that automatically summarizes new podcast episodes and delivers them via email.
+A newsletter app that automatically summarizes new podcast episodes and YouTube videos and delivers them via email.
 
 ## How it works
 
-1. Subscribe to any podcast via RSS feed
-2. Castletter detects new episodes automatically
+1. Subscribe to any podcast via RSS feed, or follow a public YouTube channel (channel ID, URL or @handle)
+2. Castletter detects new episodes and uploads automatically
 3. Episodes get transcribed and summarized by AI
 4. You receive a newsletter with the summary at your preferred time
 
@@ -52,6 +52,9 @@ defaults are shown above; both newsletter generation and transcription use the s
 ### 3. Set up Supabase
 
 Run the migrations in `supabase/migrations/` in your Supabase project.
+
+YouTube videos are transcribed only by the Docker worker (captions first, otherwise the
+full audio via OpenRouter STT using yt-dlp); see `worker/README.md` for its configuration.
 
 ### 4. Start the development server
 

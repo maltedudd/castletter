@@ -65,7 +65,7 @@ export default function ArchivePage() {
   const locale = useLocale()
 
   const [entries, setEntries] = useState<ArchiveEntry[]>([])
-  const [subscriptions, setSubscriptions] = useState<PodcastSubscription[]>([])
+  const [subscriptions, setSubscriptions] = useState<Pick<PodcastSubscription, 'id' | 'title'>[]>([])
   const [loading, setLoading] = useState(true)
   const [totalCount, setTotalCount] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)

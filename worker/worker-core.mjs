@@ -13,7 +13,8 @@ export const STALE_RESET_MESSAGE =
   'Automatischer Reset: Transkriptions-Lease abgelaufen (verwaiste transcribing-Episode)'
 export const RELEASE_MESSAGE = 'Worker gestoppt – Episode wird erneut versucht'
 
-const CANDIDATE_COLUMNS = 'id, audio_url, title, transcript, transcription_attempts, error_message'
+const CANDIDATE_COLUMNS =
+  'id, audio_url, title, transcript, transcription_attempts, error_message, source_type, youtube_video_id'
 
 /** Thrown when another run took over the episode; the worker must then write nothing. */
 export class LeaseLostError extends Error {
@@ -129,24 +130,45 @@ async function processClaimedEpisode(deps, episode, active) {
   const startedAt = Date.now()
   log('info', 'episode_claimed', { episodeId: episode.id, title: episode.title, attempt: active.attempt })
 
+  const isYouTube = episode.source_type === 'youtube'
   try {
     let transcript = episode.transcript
+    let transcriptSource = null
+    let captionsReason
     if (!transcript || transcript.trim().length === 0) {
-      transcript = await transcribeEpisodeAudio(episode, async ({ index, total }) => {
-        await refreshLease(deps, active)
-        log('info', 'chunk_transcribed', { episodeId: episode.id, chunk: index + 1, total })
-      })
+      const result = await transcribeEpisodeAudio(
+        episode,
+        async ({ index, total }) => {
+          await refreshLease(deps, active)
+          log('info', 'chunk_transcribed', { episodeId: episode.id, chunk: index + 1, total })
+        },
+        // Keep-alive between long non-chunk stages (YouTube metadata/caption/audio download).
+        () => refreshLease(deps, active)
+      )
+      // Podcast transcribers return the text, YouTube ones `{ transcript, source }`.
+      transcript = typeof result === 'string' ? result : result?.transcript
+      transcriptSource = typeof result === 'string' ? null : result?.source ?? null
+      captionsReason = typeof result === 'string' ? undefined : result?.captionsReason
+    }
+    if (typeof transcript !== 'string' || transcript.trim().length === 0) {
+      throw new PermanentError('Transkription lieferte keinen Text')
     }
 
     // Single final write, only for the complete joined transcript and only while we
     // still hold the lease.
-    const saved = await casUpdate(supabase, active, { status: 'transcribed', transcript, error_message: null })
+    const saved = await casUpdate(supabase, active, {
+      status: 'transcribed',
+      transcript,
+      error_message: null,
+      ...(isYouTube ? { error_code: null, transcript_source: transcriptSource } : {}),
+    })
     if (!saved) throw new LeaseLostError(episode.id)
 
     log('info', 'episode_transcribed', {
       episodeId: episode.id,
       chars: transcript.length,
       seconds: Math.round((Date.now() - startedAt) / 1000),
+      ...(isYouTube ? { source: transcriptSource, captionsReason } : {}),
     })
     return 'transcribed'
   } catch (err) {
@@ -156,17 +178,20 @@ async function processClaimedEpisode(deps, episode, active) {
     }
 
     const message = err instanceof Error ? err.message : String(err)
+    // YouTube failures carry a machine-readable reason that the admin UI shows.
+    const errorCode = isYouTube ? { error_code: typeof err?.code === 'string' ? err.code : 'transcription_failed' } : {}
     if (err instanceof PermanentError) {
-      await casUpdate(supabase, active, { status: 'failed', error_message: message })
-      log('error', 'episode_failed', { episodeId: episode.id, error: message })
+      await casUpdate(supabase, active, { status: 'failed', error_message: message, ...errorCode })
+      log('error', 'episode_failed', { episodeId: episode.id, error: message, ...errorCode })
       return 'failed'
     }
 
     await casUpdate(supabase, active, {
       status: 'pending_transcription',
       error_message: `Temporärer Fehler (Versuch ${active.attempt}/${config.maxAttempts}): ${message}`,
+      ...errorCode,
     })
-    log('warn', 'episode_retry_later', { episodeId: episode.id, attempt: active.attempt, error: message })
+    log('warn', 'episode_retry_later', { episodeId: episode.id, attempt: active.attempt, error: message, ...errorCode })
     return 'retry_later'
   }
 }
