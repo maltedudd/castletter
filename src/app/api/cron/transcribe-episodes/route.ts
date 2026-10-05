@@ -95,6 +95,9 @@ export async function GET(request: NextRequest) {
       .from('episodes')
       .select('id, audio_url, title, subscription_id, transcript')
       .eq('status', 'pending_transcription')
+      // YouTube videos need yt-dlp (captions/audio extraction) and are transcribed by the
+      // Docker worker only; their audio_url is a watch page, not an audio file.
+      .eq('source_type', 'podcast')
       .gte('published_at', getRecentEpisodeCutoff())
       .order('published_at', { ascending: false })
       .limit(1)

@@ -88,3 +88,24 @@ test('feed check is off by default and runs every 30 minutes when enabled', () =
   )
   assert.throws(() => loadWorkerConfig({ ...REQUIRED, WORKER_FEED_CHECK_ENABLED: 'true', FEED_CHECK_INTERVAL_MINUTES: '0' }), /FEED_CHECK_INTERVAL_MINUTES/)
 })
+
+test('YouTube transcription defaults and overrides', () => {
+  assert.deepEqual(loadWorkerConfig(REQUIRED).youtube, {
+    ytDlpPath: 'yt-dlp',
+    downloadTimeoutMs: 600_000,
+    captionLanguages: ['de', 'en'],
+  })
+  assert.deepEqual(
+    loadWorkerConfig({
+      ...REQUIRED,
+      YTDLP_PATH: '/opt/yt-dlp/bin/yt-dlp',
+      YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS: '300',
+      YOUTUBE_CAPTION_LANGUAGES: 'en, de-DE, ;rm',
+    }).youtube,
+    { ytDlpPath: '/opt/yt-dlp/bin/yt-dlp', downloadTimeoutMs: 300_000, captionLanguages: ['en', 'de-DE'] }
+  )
+})
+
+test('YouTube download timeout must stay inside the transcription lease', () => {
+  assert.throws(() => loadWorkerConfig({ ...REQUIRED, YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS: '900' }), /höchstens 840/)
+})

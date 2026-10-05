@@ -63,6 +63,19 @@ Erstellt die `user_settings` Tabelle für PROJ-7 (User Settings):
 - **RLS Policies**: User können nur ihre eigenen Settings sehen/ändern
 - **Indexes**: Optimiert für Delivery-Hour-Queries (PROJ-6)
 
+### 20261005_add_youtube_channel_sources.sql (Kanban #29)
+
+YouTube-Kanäle als zweite Quellenart im bestehenden Modell:
+
+- **`podcast_subscriptions`**: `source_type` (`podcast` | `youtube`, Standard `podcast`),
+  `youtube_channel_id` (stabile `UC…`-ID, Pflicht für YouTube), `enabled` (deaktivierte
+  Quellen werden nicht geprüft), `last_checked_at`, `last_check_status`, `last_check_error`.
+  Unique-Index je Nutzer und Channel-ID.
+- **`episodes`**: `source_type`, `youtube_video_id` (Unique je Quelle), `transcript_source`
+  (`captions` | `audio_stt`), `error_code` (Fehlergrund, siehe `worker/README.md`).
+- Bestehende Zeilen werden zu `podcast` und verhalten sich unverändert. Die Migration muss
+  **vor** dem Deployment von App und Worker laufen.
+
 ## Verifizierung
 
 Nach dem Ausführen der Migration kannst du im Supabase Dashboard prüfen:

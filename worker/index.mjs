@@ -1,5 +1,6 @@
-// Castletter worker: (if enabled) imports new episodes from the podcast feeds, polls
-// Supabase for pending episodes and transcribes them completely, then (if enabled)
+// Castletter worker: (if enabled) imports new episodes/videos from the podcast feeds and
+// YouTube channels, polls Supabase for pending episodes and transcribes them completely
+// (YouTube: captions first, full-audio STT fallback), then (if enabled)
 // generates their newsletters and sends them — without the Vercel function time limit.
 
 import { writeFile } from 'node:fs/promises'
@@ -12,10 +13,9 @@ import { runOnce, releaseClaim } from './worker-core.mjs'
 import { runGenerationOnce, runSendSweep, createHourlyGate } from './newsletter-jobs.mjs'
 import { runFeedCheck, createIntervalGate } from './feed-jobs.mjs'
 import { generateEmailHTML, generateEmailPlainText } from '../src/lib/email/template.mjs'
-import {
-  createOpenRouterChunkTranscriber,
-  transcribeAudioFromUrl,
-} from '../src/lib/transcription/audio-transcriber.mjs'
+import { createOpenRouterChunkTranscriber } from '../src/lib/transcription/audio-transcriber.mjs'
+import { createYtDlpClient } from '../src/lib/youtube/yt-dlp.mjs'
+import { createEpisodeTranscriber } from './transcribers.mjs'
 
 function log(level, msg, data = {}) {
   const line = JSON.stringify({ ts: new Date().toISOString(), level, msg, ...data })
@@ -59,6 +59,11 @@ async function main() {
   })
   const openrouter = new OpenAI(config.openrouter.client)
   const transcribeChunk = createOpenRouterChunkTranscriber(openrouter, config.openrouter.transcriptionModel)
+  const transcribeEpisode = createEpisodeTranscriber({
+    config,
+    transcribeChunk,
+    youtube: createYtDlpClient({ binary: config.youtube.ytDlpPath, timeoutMs: config.youtube.downloadTimeoutMs }),
+  })
 
   const deps = {
     supabase,
@@ -71,16 +76,18 @@ async function main() {
       return (xml) => parser.parseString(xml)
     })(),
     sendEmail: config.newsletters ? createMailer(config.newsletters) : null,
-    transcribeEpisodeAudio: (episode, onChunkTranscribed) =>
-      transcribeAudioFromUrl({
-        audioUrl: episode.audio_url,
-        transcribeChunk,
-        downloadTimeoutMs: config.downloadTimeoutMs,
-        onChunkTranscribed: async (info) => {
+    transcribeEpisodeAudio: (episode, onChunkTranscribed, onProgress) =>
+      transcribeEpisode(
+        episode,
+        async (info) => {
           await writeHeartbeat(config)
           await onChunkTranscribed(info)
         },
-      }),
+        async (info) => {
+          await writeHeartbeat(config)
+          await onProgress(info)
+        }
+      ),
   }
 
   const state = { active: null }
@@ -113,6 +120,8 @@ async function main() {
     feedCheckIntervalMinutes: config.feedCheckIntervalMs ? config.feedCheckIntervalMs / 60_000 : null,
     newsletters: Boolean(config.newsletters),
     newsletterModel: config.newsletters ? config.openrouter.newsletterModel : undefined,
+    youtubeDownloadTimeoutSeconds: config.youtube.downloadTimeoutMs / 1000,
+    youtubeCaptionLanguages: config.youtube.captionLanguages,
   })
 
   const sendSweep = createHourlyGate()

@@ -26,7 +26,7 @@ Fehler:
   „Temporärer Fehler (Versuch n/max)“.
 - Nach `TRANSCRIPTION_MAX_ATTEMPTS` Versuchen → `failed` mit dem letzten Fehlertext.
 
-Der Worker braucht nur ausgehende Verbindungen (Supabase, OpenRouter, Podcast-Feeds und Audio-Hosts, Resend).
+Der Worker braucht nur ausgehende Verbindungen (Supabase, OpenRouter, Podcast-Feeds und Audio-Hosts, YouTube, Resend).
 
 ## Feed-Check (`WORKER_FEED_CHECK_ENABLED=true`)
 
@@ -39,6 +39,62 @@ Durchlauf wiederholt; neue Episoden werden direkt danach transkribiert.
 Umschalten: in Vercel `FEED_CHECK_CRON_DISABLED=true` setzen und neu deployen, den Job für
 `/api/cron/check-new-episodes` auf cron-job.org deaktivieren, dann in `worker/.env`
 `WORKER_FEED_CHECK_ENABLED=true` setzen und `docker compose up -d --build`.
+
+## YouTube-Kanäle (Kanban #29)
+
+YouTube-Kanäle sind Quellen wie Podcast-Feeds: Sie werden auf der Abo-Seite der App über
+Channel-ID (`UC…`), Kanal-URL (`/channel/…`, `/@handle`, `/c/…`, `/user/…`) oder `@Handle`
+angelegt. Gespeichert wird immer die aufgelöste, stabile Channel-ID
+(`podcast_subscriptions.source_type = 'youtube'`, `youtube_channel_id`). Kanäle lassen sich
+umbenennen, auf „Sofort“/„Täglich“ stellen, deaktivieren und löschen.
+
+1. **Feed-Check:** Für jeden aktiven Kanal wird der offizielle Atom-Feed
+   `https://www.youtube.com/feeds/videos.xml?channel_id=<ID>` gelesen (immer aus der
+   Channel-ID gebaut). Jedes Video wird höchstens einmal als Episode angelegt
+   (`guid = yt:video:<videoId>`, Unique-Index auf `(subscription_id, youtube_video_id)`),
+   mit denselben Regeln wie bei Podcasts (nach Abo-Start bzw. max. 30 Tage, max. 50 je
+   Lauf). Ergebnis und Fehler stehen in `feed_check_logs` und direkt am Kanal
+   (`last_checked_at`, `last_check_status`, `last_check_error`).
+2. **Transkription** (nur im Worker; die Vercel-Route überspringt YouTube-Episoden):
+   - Zuerst vollständige YouTube-Untertitel: manuelle Untertitel (Originalsprache, dann
+     `YOUTUBE_CAPTION_LANGUAGES`), sonst automatische Untertitel nur in der gesprochenen
+     Originalsprache – nie maschinelle Übersetzungen. Untertitel gelten nur als brauchbar,
+     wenn sie bis zum Videoende reichen (max. 60 s bzw. 5 % Lücke) und genug Text enthalten.
+   - Sonst wird das **komplette** Audio per yt-dlp als Mono-MP3 geladen und über den
+     bestehenden OpenRouter-STT-Weg (in Reihenfolge, chunkweise, alles oder nichts)
+     transkribiert. Teil- oder Timeout-Ergebnisse werden nie gespeichert.
+   - `episodes.transcript_source` hält `captions` bzw. `audio_stt` fest.
+3. Danach laufen YouTube-Episoden durch dieselbe Newsletter-Generierung und denselben
+   Versand wie Podcast-Episoden (`transcribed` → `newsletter_ready` → …).
+
+Fehler werden mit Code in `episodes.error_code` und Klartext in `error_message`
+gespeichert und in der App (Abo-Seite, Admin-Seite) angezeigt:
+
+| Code | Bedeutung | Behandlung |
+| --- | --- | --- |
+| `video_unavailable` | privat, gelöscht, nur für Mitglieder, Altersfreigabe | sofort `failed` |
+| `video_not_yet_available` | Livestream läuft / Premiere steht bevor | temporär, nach `TRANSCRIPTION_MAX_ATTEMPTS` `failed` |
+| `youtube_blocked` | Bot-Check oder HTTP 429 | temporär |
+| `youtube_fetch_failed` | Metadaten nicht ladbar | temporär |
+| `youtube_tool_missing` | yt-dlp nicht installiert / `YTDLP_PATH` falsch | temporär |
+| `audio_download_failed` | keine brauchbaren Untertitel und Audio-Download fehlgeschlagen (inkl. Timeout) | temporär |
+| `stt_failed` | keine brauchbaren Untertitel und STT fehlgeschlagen (z. B. keine Sprache) | wie der STT-Fehler |
+
+Eine fehlgeschlagene Episode wird erneut versucht, indem man in Supabase `status` auf
+`pending_transcription` und `transcription_attempts` auf `0` setzt.
+
+Konfiguration (optional, Standardwerte):
+
+- `YTDLP_PATH=yt-dlp` – yt-dlp ist im Image installiert (offizielles Release mit
+  Prüfsummen-Check, dazu ffmpeg; nutzt Node als JS-Runtime über `/etc/yt-dlp.conf`).
+  Update: `docker compose build --no-cache`; feste Version per
+  `docker compose build --build-arg YTDLP_VERSION=2026.08.19`.
+- `YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS=600` – je yt-dlp-Schritt; höchstens 840, damit die
+  Transkriptions-Lease (15 min, zwischen den Schritten erneuert) nie abläuft.
+- `YOUTUBE_CAPTION_LANGUAGES=de,en` – bevorzugte Untertitelsprachen nach der Originalsprache.
+
+Es werden keine YouTube-Zugangsdaten oder Cookies benötigt oder gespeichert. Grenzen:
+Playlists, Shorts-Filter und nicht öffentliche Videos werden nicht unterstützt.
 
 ## Newsletter-Pipeline (`WORKER_NEWSLETTERS_ENABLED=true`)
 
@@ -60,8 +116,10 @@ Benötigt zusätzlich `RESEND_API_KEY` und `APP_URL` (für den Einstellungs-Link
 
 ## Voraussetzungen
 
-1. Migration `supabase/migrations/20261003_add_episode_transcription_attempts.sql` ist auf
-   der Datenbank angewendet. Fehlt die Spalte, loggt jede Iteration `iteration_failed`.
+1. Migrationen `supabase/migrations/20261003_add_episode_transcription_attempts.sql` und
+   `supabase/migrations/20261005_add_youtube_channel_sources.sql` sind auf der Datenbank
+   angewendet – **vor** dem Deployment dieser Worker- bzw. App-Version. Fehlen die Spalten,
+   loggt jede Iteration `iteration_failed` und der Feed-Check schlägt fehl.
 2. Docker mit Compose v2 und BuildKit (Standard bei aktuellen Docker-Versionen).
 
 ## Betrieb auf der Docker-VM
