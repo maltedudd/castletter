@@ -18,7 +18,7 @@ const FEED_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
  <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}"/>
  <id>yt:channel:_x5XG1OV2P6uZZ5FSM9Ttw</id>
- <yt:channelId>${CHANNEL_ID}</yt:channelId>
+ <yt:channelId>_x5XG1OV2P6uZZ5FSM9Ttw</yt:channelId>
  <title>Google for Developers &amp; Friends</title>
  <author><name>Google for Developers</name><uri>https://www.youtube.com/channel/${CHANNEL_ID}</uri></author>
  <published>2007-08-23T00:34:43+00:00</published>
@@ -117,6 +117,20 @@ test('parseYouTubeFeed reads channel and entries, decoding XML entities and CDAT
       thumbnailUrl: null,
     },
   ])
+})
+
+test('parseYouTubeFeed restores the UC prefix YouTube omits in the feed head (regression #32)', () => {
+  // Verbatim structure of a real channel feed head (2026-10-06): head ID without "UC".
+  const feed = parseYouTubeFeed(`<feed><link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCDx6L69jmKBJbNu5GnkCilg"/>
+ <id>yt:channel:Dx6L69jmKBJbNu5GnkCilg</id>
+ <yt:channelId>Dx6L69jmKBJbNu5GnkCilg</yt:channelId>
+ <title>Christoph Magnussen</title>
+ <entry><id>yt:video:dYQ3NKkYiY4</id><yt:videoId>dYQ3NKkYiY4</yt:videoId><yt:channelId>UCDx6L69jmKBJbNu5GnkCilg</yt:channelId><title>T</title><published>2026-10-05T10:00:00+00:00</published></entry>
+</feed>`)
+  assert.equal(feed.channelId, 'UCDx6L69jmKBJbNu5GnkCilg')
+  // An already complete ID stays as it is; garbage is passed through for the mismatch check.
+  assert.equal(parseYouTubeFeed(`<feed><yt:channelId>${CHANNEL_ID}</yt:channelId></feed>`).channelId, CHANNEL_ID)
+  assert.equal(parseYouTubeFeed('<feed><yt:channelId>kaputt</yt:channelId></feed>').channelId, 'kaputt')
 })
 
 test('parseYouTubeFeed falls back to the entry id and skips entries without a valid video ID', () => {

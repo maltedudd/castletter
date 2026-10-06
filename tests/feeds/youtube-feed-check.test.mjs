@@ -30,7 +30,8 @@ function feedXml(entries, channelId = CHANNEL_ID) {
   const body = entries
     .map((e) => `<entry><id>yt:video:${e.videoId}</id><yt:videoId>${e.videoId}</yt:videoId><title>${e.title}</title><published>${e.published}</published><media:group><media:description>${e.description ?? ''}</media:description></media:group></entry>`)
     .join('')
-  return `<feed><yt:channelId>${channelId}</yt:channelId><title>Kanal</title>${body}</feed>`
+  // Real feeds carry the head channel ID without its "UC" prefix.
+  return `<feed><yt:channelId>${channelId.slice(2)}</yt:channelId><title>Kanal</title>${body}</feed>`
 }
 
 /**
