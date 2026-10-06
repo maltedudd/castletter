@@ -4,6 +4,7 @@ import {
   MAX_TRANSCRIPT_CHARS,
   GENERATION_LEASE_MS,
   buildNewsletterPrompt,
+  buildArticleSummaryBudget,
   parseNewsletter,
   getPodcastRef,
   buildGenerationMarker,
@@ -87,10 +88,11 @@ test('prompt carries podcast, episode and transcript; long transcripts are trunc
 })
 
 test('buildNewsletterPrompt uses website wording for articles, keeps the section headings and forbids additions', () => {
-  const prompt = buildNewsletterPrompt({ podcastTitle: 'Stadtblog', episodeTitle: 'Wärmenetz', transcript: 'Artikeltext', sourceType: 'website' })
+  const text = `Artikeltext ${'Satz mit Inhalt. '.repeat(500)}`.trim()
+  const prompt = buildNewsletterPrompt({ podcastTitle: 'Stadtblog', episodeTitle: 'Wärmenetz', transcript: text, sourceType: 'website' })
   assert.match(prompt, /^Du fasst einen Artikel einer Website zusammen\./)
   assert.match(prompt, /ausschließlich auf den folgenden Text/)
-  assert.match(prompt, /\nWebsite: Stadtblog\nArtikel: Wärmenetz\n\nText:\nArtikeltext\n/)
+  assert.ok(prompt.includes(`\nWebsite: Stadtblog\nArtikel: Wärmenetz\n\nText:\n${text}\n`))
   assert.doesNotMatch(prompt, /Podcast|Transkript/)
   for (const heading of ['Zusammenfassung', 'Hauptthemen', 'Wichtige Aussagen und Erkenntnisse', 'Tipps und Methoden', 'Zitate und Begriffe', 'Wer sagt was', 'Einordnung']) {
     assert.ok(prompt.includes(`\n## ${heading}\n`), heading)
@@ -98,6 +100,71 @@ test('buildNewsletterPrompt uses website wording for articles, keeps the section
   // YouTube and unknown types keep the podcast prompt unchanged.
   const base = { podcastTitle: 'P', episodeTitle: 'E', transcript: 'T' }
   assert.equal(buildNewsletterPrompt({ ...base, sourceType: 'youtube' }), buildNewsletterPrompt(base))
+})
+
+const words = (n) => Array.from({ length: n }, (_, i) => `wort${i}`).join(' ')
+
+test('buildArticleSummaryBudget: about a quarter of the article, within 60–500 words, three tiers', () => {
+  assert.deepEqual(buildArticleSummaryBudget(words(611)), { articleWords: 611, targetWords: 150, tier: 'medium' })
+  assert.deepEqual(buildArticleSummaryBudget(words(150)), { articleWords: 150, targetWords: 60, tier: 'short' })
+  assert.deepEqual(buildArticleSummaryBudget(words(399)), { articleWords: 399, targetWords: 100, tier: 'short' })
+  assert.deepEqual(buildArticleSummaryBudget(words(1200)), { articleWords: 1200, targetWords: 300, tier: 'long' })
+  assert.deepEqual(buildArticleSummaryBudget(words(5000)), { articleWords: 5000, targetWords: 500, tier: 'long' })
+  assert.equal(buildArticleSummaryBudget('  ein\n\nkurzer   Text ').articleWords, 3)
+})
+
+test('website prompt sets a word budget relative to the article and drops the minimum bullet count', () => {
+  const prompt = buildNewsletterPrompt({ podcastTitle: 'tagesschau.de', episodeTitle: 'Schülerproteste', transcript: words(611), sourceType: 'website' })
+  assert.match(prompt, /Der Artikel hat etwa 610 Wörter\. Die gesamte Zusammenfassung darf höchstens etwa 150 Wörter umfassen/)
+  assert.doesNotMatch(prompt, /Mindestens 3 Bullet Points/)
+  assert.match(prompt, /## Hauptthemen\n- \[2–4 Stichpunkte/)
+  assert.match(prompt, /## Wichtige Aussagen und Erkenntnisse\n- \[3–5 Stichpunkte/)
+
+  const short = buildNewsletterPrompt({ podcastTitle: 'B', episodeTitle: 'E', transcript: words(200), sourceType: 'website' })
+  assert.match(short, /höchstens etwa 60 Wörter/)
+  assert.match(short, /Nur die Abschnitte „Zusammenfassung“, „Hauptthemen“ und „Wichtige Aussagen und Erkenntnisse“/)
+  assert.doesNotMatch(short, /## Einordnung/)
+
+  const long = buildNewsletterPrompt({ podcastTitle: 'B', episodeTitle: 'E', transcript: words(3000), sourceType: 'website' })
+  assert.match(long, /höchstens etwa 500 Wörter/)
+  assert.match(long, /## Einordnung\n/)
+})
+
+test('podcast prompt is unchanged word for word', () => {
+  const expected = `Du fasst eine Podcast-Episode zusammen. Dein Ziel ist, mir das Wissen aus dem Podcast so zu vermitteln, als hättest du ihn für mich gehört. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln.
+
+Podcast: P
+Episode: E
+
+Transkript:
+T
+
+Erstelle folgende Struktur (exakt diese Überschriften verwenden):
+
+## Zusammenfassung
+[Prägnante Zusammenfassung in max. 5 Sätzen – für einen schnellen Überblick]
+
+## Hauptthemen
+- [Die Hauptthemen des Podcasts als Stichpunkte]
+
+## Wichtige Aussagen und Erkenntnisse
+- [Alle wichtigen Aussagen und Erkenntnisse – logisch gruppiert]
+
+## Tipps und Methoden
+- [Konkrete Tipps, Methoden, Handlungsempfehlungen oder Frameworks – falls vorhanden. Wenn nicht vorhanden, diese Sektion weglassen.]
+
+## Zitate und Begriffe
+- [Wichtige Zitate oder Begriffe, die im Podcast hervorgehoben wurden – falls vorhanden. Wenn nicht vorhanden, diese Sektion weglassen.]
+
+## Wer sagt was
+- [Falls der Podcast ein Interview ist: Wer sagt was? Rollen oder Perspektiven angeben. Falls kein Interview, diese Sektion weglassen.]
+
+## Einordnung
+[Kritische Reflexion oder Kontext – wie das Gesagte einzuordnen ist. 2-3 Sätze. Falls nicht sinnvoll, diese Sektion weglassen.]
+
+Mindestens 3 Bullet Points pro Sektion. Optionale Sektionen nur aufnehmen, wenn der Inhalt sie hergibt.`
+  assert.equal(buildNewsletterPrompt({ podcastTitle: 'P', episodeTitle: 'E', transcript: 'T' }), expected)
+  assert.equal(buildNewsletterPrompt({ podcastTitle: 'P', episodeTitle: 'E', transcript: 'T', sourceType: 'youtube' }), expected)
 })
 
 test('parseNewsletter extracts all sections', () => {
