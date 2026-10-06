@@ -1,7 +1,8 @@
 # Castletter Worker
 
 Eigenständiger Docker-Worker, der Podcast-Episoden ohne das Zeitlimit von Vercel
-transkribiert und – wenn zugeschaltet – neue Episoden aus den Feeds holt sowie die
+transkribiert (Website-Artikel ohne Audio aufbereitet) und – wenn zugeschaltet – neue
+Episoden und Artikel aus den Feeds holt sowie die
 Newsletter erzeugt und verschickt. Er ersetzt die Cron-Aufrufe von
 `/api/cron/check-new-episodes`, `/api/cron/transcribe-episodes`,
 `/api/cron/generate-newsletters` und `/api/cron/send-newsletters`.
@@ -47,7 +48,7 @@ Konfiguration der Transkription (optional, Standardwerte; je höchstens 840 s, d
 
 Die Vercel-Route `/api/cron/transcribe-episodes` nutzt weiterhin die alte Range-Variante.
 
-Der Worker braucht nur ausgehende Verbindungen (Supabase, OpenRouter, Podcast-Feeds und Audio-Hosts, YouTube, Resend).
+Der Worker braucht nur ausgehende Verbindungen (Supabase, OpenRouter, Podcast-Feeds und Audio-Hosts, YouTube, Websites mit RSS-Feed, Resend).
 
 ## Feed-Check (`WORKER_FEED_CHECK_ENABLED=true`)
 
@@ -134,6 +135,52 @@ Konfiguration (optional, Standardwerte):
 
 Es werden keine YouTube-Zugangsdaten oder Cookies benötigt oder gespeichert. Grenzen:
 Playlists und nicht öffentliche Videos werden nicht unterstützt.
+
+## Websites per RSS (Kanban #35)
+
+Öffentliche Websites mit RSS- oder Atom-Feed sind der dritte Quelltyp **„Website (RSS)“**
+(`podcast_subscriptions.source_type = 'website'`). Angelegt werden sie auf der Quellen-Seite
+über die Feed-URL oder die Adresse der Website, sofern diese ihren Feed per
+`<link rel="alternate" type="application/rss+xml|atom+xml">` angibt
+(`POST /api/websites/validate`). Podcast-Feeds (Audio-Enclosures) und YouTube-Adressen werden
+abgelehnt, mit Vorschlag des passenden Quelltyps. Die Vorschau zeigt Feed-Format und den
+erkannten Inhalt (vollständige Artikel im Feed bzw. Kurzfassungen).
+
+1. **Feed-Check** (Worker und Vercel-Cron): neue Einträge werden als `pending_transcription`
+   mit `source_type = 'website'` angelegt – gleiche Regeln wie bei Podcasts (nach Abo-Start
+   bzw. max. 30 Tage, max. 50 je Lauf), aber ohne Audio. Schlüssel ist `guid` › Atom-`id` ›
+   Link › Hash, Duplikate im Feed und bereits importierte Einträge werden übersprungen.
+   Gespeichert werden der bereinigte Feed-Text (`feed_content`) und der Artikel-Link
+   (`article_url`; `audio_url` hält denselben Link, weil die Spalte Pflicht ist).
+2. **Text statt Transkription** (nur im Worker; die Vercel-Route überspringt
+   Website-Einträge) – kein Audio, kein ffmpeg, kein STT:
+   - Ist der Feed-Text vollständig (≥ 1500 Zeichen, ohne Kürzungsmarker wie „…“, „[…]“,
+     „Weiterlesen“, „Read more“), wird er verwendet (`transcript_source = 'feed_content'`).
+   - Sonst wird **ausschließlich** der verlinkte Artikel geladen (nur öffentliche Hosts,
+     jede Weiterleitung geprüft, max. 5 Weiterleitungen, 15 s, 3 MB) und sein Hauptinhalt
+     bereinigt (`articleBody` › `<article>` › `<main>`; Navigation, Kopf-/Fußzeile,
+     Seitenleisten, Formulare und Skripte entfernt; `transcript_source = 'article'`).
+     Enthält die Seite nicht mehr Text als ein ungekürzter Feed-Text von mindestens 800
+     Zeichen, gilt dieser als vollständiger kurzer Beitrag (`feed_content`).
+   - Paywall, Anmeldung oder fehlender Volltext werden nicht umgangen: Der Eintrag wird
+     `failed` mit Grund und es entsteht kein Newsletter. Markiert eine Seite ihren Artikel
+     per schema.org als nicht frei (`isAccessibleForFree: false`), wird auch im HTML
+     mitgelieferter Text nicht verwendet.
+3. Danach dieselbe Newsletter-Generierung (mit einem Prompt für Artikel, der nur den
+   vorliegenden Text zusammenfasst) und derselbe Versand. In der Mail steht „Artikel lesen“
+   statt „Episode anhören“.
+
+| Code | Bedeutung | Behandlung |
+| --- | --- | --- |
+| `paywalled` | Paywall erkannt (schema.org-Markierung oder Paywall-Container ohne Volltext) | sofort `failed` |
+| `access_restricted` | HTTP 401/402/403 oder Weiterleitung auf Anmelde-/Abo-Seite | sofort `failed` |
+| `content_incomplete` | nur Kurzfassung im Feed und kein vollständiger Text auf der Seite (oder kein Link) | sofort `failed` |
+| `article_unavailable` | Artikel gelöscht (HTTP 404/410) oder Adresse nicht erlaubt | sofort `failed` |
+| `article_fetch_failed` | Serverfehler, HTTP 429, Timeout oder Netzwerk | temporär, nach `TRANSCRIPTION_MAX_ATTEMPTS` `failed` |
+
+Grund und Klartext stehen auf der Quellen-Seite unter „Nicht zusammengefasste Artikel“.
+Nicht unterstützt: Websites ohne Feed, E-Mail-Postfächer als Quelle, Inhalte hinter
+Anmeldung oder Paywall.
 
 ## Newsletter-Pipeline (`WORKER_NEWSLETTERS_ENABLED=true`)
 

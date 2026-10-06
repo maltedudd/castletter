@@ -76,6 +76,20 @@ YouTube-Kanäle als zweite Quellenart im bestehenden Modell:
 - Bestehende Zeilen werden zu `podcast` und verhalten sich unverändert. Die Migration muss
   **vor** dem Deployment von App und Worker laufen.
 
+### 20261006_add_website_rss_sources.sql (Kanban #35)
+
+Websites mit öffentlichem RSS-/Atom-Feed als dritter Quelltyp „Website (RSS)“:
+
+- **`podcast_subscriptions.source_type`** erlaubt `website`; Websites haben keine
+  `youtube_channel_id` und sind wie Podcasts über `feed_url` (unique je Nutzer) identifiziert.
+- **`episodes`**: `source_type` erlaubt `website`; neue Spalten `article_url` (öffentlicher
+  Artikel-Link) und `feed_content` (bereinigter Feed-Text), nur für Website-Zeilen erlaubt;
+  `transcript_source` erlaubt zusätzlich `feed_content` | `article`. Neue `error_code`-Werte
+  für Websites siehe `worker/README.md`.
+- Die CHECK-Constraints auf `source_type`/`transcript_source` werden namensunabhängig ersetzt;
+  bestehende Podcast- und YouTube-Zeilen bleiben unverändert. Die Migration ist wiederholbar
+  und muss **vor** dem Deployment von App und Worker laufen.
+
 ## Verifizierung
 
 Nach dem Ausführen der Migration kannst du im Supabase Dashboard prüfen:
