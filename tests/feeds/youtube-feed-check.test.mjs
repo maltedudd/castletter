@@ -151,10 +151,13 @@ test('feed failures are persisted on the source with an actionable reason', asyn
 
   const summary = await checkAllFeeds(d)
 
-  assert.deepEqual(summary, { subscriptionsChecked: 4, newEpisodes: 0, errors: 4 })
+  const { issues, ...counts } = summary
+  assert.deepEqual(counts, { subscriptionsChecked: 4, newEpisodes: 0, errors: 4 })
+  assert.equal(issues.length, 4)
+  assert.ok(issues.every((issue) => issue.source === 'Kanal' && issue.error))
   const byId = Object.fromEntries(db.data.podcast_subscriptions.map((s) => [s.id, s]))
   assert.equal(byId['yt-1'].last_check_status, 'error')
-  assert.match(byId['yt-1'].last_check_error, /HTTP 404.*Kanal gelöscht oder Channel-ID falsch/)
+  assert.match(byId['yt-1'].last_check_error, /HTTP 404.*Störung bei YouTube oder Kanal gelöscht/)
   assert.match(byId['yt-2'].last_check_error, /Kein gültiger YouTube-Feed/)
   assert.match(byId['yt-3'].last_check_error, /gehört zu Kanal UCaaaa/)
   assert.match(byId['yt-4'].last_check_error, /Ungültige YouTube-Channel-ID/)
@@ -186,7 +189,9 @@ test('an inconclusive Shorts check holds the video back with a visible error and
   const blocked = deps(db, routes, { shortStatus: { [vid(2)]: 429 } })
   const summary = await checkAllFeeds(blocked)
 
-  assert.deepEqual(summary, { subscriptionsChecked: 1, newEpisodes: 1, errors: 1 })
+  const { issues, ...counts } = summary
+  assert.deepEqual(counts, { subscriptionsChecked: 1, newEpisodes: 1, errors: 1 })
+  assert.deepEqual(issues.map((issue) => issue.source), ['Kanal'])
   assert.deepEqual(db.data.episodes.map((e) => e.youtube_video_id), [vid(1)])
   const source = db.data.podcast_subscriptions[0]
   assert.equal(source.last_check_status, 'error')

@@ -1,10 +1,11 @@
-// Feed check stage of the worker pipeline: imports new episodes from all podcast feeds on a
-// fixed interval. New episodes are transcribed by the same loop right afterwards.
+// Feed check stage of the worker pipeline: imports new episodes from all podcast feeds and
+// YouTube channels on a fixed interval (YouTube with the yt-dlp fallback when the channel
+// feed is down). New episodes are transcribed by the same loop right afterwards.
 
 import { checkAllFeeds } from '../src/lib/feeds/check-feeds.mjs'
 
-export async function runFeedCheck({ supabase, parseXml, now, log, fetchImpl }) {
-  const summary = await checkAllFeeds({ supabase, parseXml, now, fetchImpl })
+export async function runFeedCheck({ supabase, parseXml, now, log, fetchImpl, youtubeFallback }) {
+  const summary = await checkAllFeeds({ supabase, parseXml, now, fetchImpl, youtubeFallback })
   log(summary.errors > 0 ? 'warn' : 'info', 'feed_check', summary)
   return summary
 }

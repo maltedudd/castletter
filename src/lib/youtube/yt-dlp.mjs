@@ -10,12 +10,13 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { buildYouTubeWatchUrl } from './channel.mjs'
+import { buildYouTubeWatchUrl, isYouTubeChannelId, isYouTubeVideoId } from './channel.mjs'
 import { YOUTUBE_ERROR_CODES, YouTubePermanentError, YouTubeTemporaryError } from './transcript.mjs'
 
 const execFileAsync = promisify(execFile)
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const BASE_ARGS = ['--no-playlist', '--no-progress', '--no-warnings']
+export const FALLBACK_UPLOAD_LIMIT = 15 // like the channel feed
 
 const PERMANENT_PATTERNS = [
   /private video|video is private/i,
@@ -29,22 +30,29 @@ const PERMANENT_PATTERNS = [
 const NOT_YET_PATTERNS = [/live event will begin/i, /premieres? in/i, /is upcoming/i, /this live event/i]
 const BLOCKED_PATTERNS = [/confirm you.?re not a bot/i, /HTTP Error 429/i, /too many requests/i]
 
+/**
+ * `timeoutMs` bounds downloads, `listTimeoutMs` the quick listing/date lookups of the feed
+ * fallback (they run inside the feed check, not under a transcription lease).
+ */
 export function createYtDlpClient({
   binary = 'yt-dlp',
   timeoutMs,
+  listTimeoutMs = 60_000,
   execFileImpl = execFileAsync,
   tmpRoot = tmpdir(),
 }) {
-  async function run(args, operationCode) {
+  async function run(args, operationCode, { timeout = timeoutMs, allowPartial = false } = {}) {
     try {
       const { stdout } = await execFileImpl(binary, [...BASE_ARGS, ...args], {
-        timeout: timeoutMs,
+        timeout,
         killSignal: 'SIGKILL',
         maxBuffer: MAX_OUTPUT_BYTES,
       })
       return stdout
     } catch (err) {
-      throw classifyYtDlpError(err, { operationCode, timeoutMs })
+      // With --ignore-errors yt-dlp exits non-zero if any URL failed but still prints the rest.
+      if (allowPartial && !err?.killed && String(err?.stdout ?? '').trim()) return String(err.stdout)
+      throw classifyYtDlpError(err, { operationCode, timeoutMs: timeout })
     }
   }
 
@@ -81,6 +89,53 @@ export function createYtDlpClient({
         if (!file) throw new Error(`Untertiteldatei (${language}) wurde nicht erzeugt`)
         return JSON.parse(await readFile(path.join(dir, file), 'utf8'))
       })
+    },
+
+    /**
+     * Feed fallback: newest uploads of the channel's Videos tab (no Shorts, no live streams)
+     * as feed-like entries. Dates are approximate ("vor 2 Tagen") and marked as such.
+     */
+    async listUploads(channelId, { limit = FALLBACK_UPLOAD_LIMIT } = {}) {
+      if (!isYouTubeChannelId(channelId)) throw new Error(`Ungültige YouTube-Channel-ID: ${channelId}`)
+      const stdout = await run([
+        '--flat-playlist',
+        '--dump-single-json',
+        '--playlist-end', String(limit),
+        '--extractor-args', 'youtubetab:approximate_date',
+        `https://www.youtube.com/channel/${channelId}/videos`,
+      ], YOUTUBE_ERROR_CODES.youtubeFetchFailed, { timeout: listTimeoutMs })
+      let listing
+      try {
+        listing = JSON.parse(stdout)
+      } catch {
+        throw new YouTubeTemporaryError(YOUTUBE_ERROR_CODES.youtubeFetchFailed, 'yt-dlp lieferte keine gültige Kanalliste')
+      }
+      return (listing.entries ?? [])
+        .filter((entry) => isYouTubeVideoId(entry?.id))
+        .map((entry) => ({
+          videoId: entry.id,
+          title: entry.title || '',
+          published: Number.isFinite(entry.timestamp) ? new Date(entry.timestamp * 1000).toISOString() : null,
+          description: null,
+          approximate: true,
+        }))
+    },
+
+    /** Exact publish times `{ [videoId]: iso }`; videos yt-dlp cannot read are left out. */
+    async fetchPublishTimes(videoIds) {
+      if (videoIds.length === 0) return {}
+      const urls = videoIds.map((id) => buildYouTubeWatchUrl(id))
+      const stdout = await run(
+        ['--skip-download', '--ignore-errors', '--print', '%(id)s %(timestamp)s', ...urls],
+        YOUTUBE_ERROR_CODES.youtubeFetchFailed,
+        { timeout: listTimeoutMs, allowPartial: true }
+      )
+      const times = {}
+      for (const line of stdout.split('\n')) {
+        const [id, timestamp] = line.trim().split(' ')
+        if (videoIds.includes(id) && /^\d+$/.test(timestamp ?? '')) times[id] = new Date(Number(timestamp) * 1000).toISOString()
+      }
+      return times
     },
 
     /** Downloads the complete best audio track into `dir`; returns `{ path }`. */

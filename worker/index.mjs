@@ -60,10 +60,11 @@ async function main() {
   })
   const openrouter = new OpenAI(config.openrouter.client)
   const transcribeChunk = createOpenRouterChunkTranscriber(openrouter, config.openrouter.transcriptionModel)
+  const ytDlp = createYtDlpClient({ binary: config.youtube.ytDlpPath, timeoutMs: config.youtube.downloadTimeoutMs })
   const transcribeEpisode = createEpisodeTranscriber({
     config,
     transcribeChunk,
-    youtube: createYtDlpClient({ binary: config.youtube.ytDlpPath, timeoutMs: config.youtube.downloadTimeoutMs }),
+    youtube: ytDlp,
     ffmpeg: createFfmpeg({ binary: config.ffmpegPath, timeoutMs: config.transcodeTimeoutMs }),
   })
 
@@ -73,6 +74,8 @@ async function main() {
     now: () => new Date(),
     log,
     openrouter,
+    // Reads the channel's Videos tab when YouTube's feed endpoint is down.
+    youtubeFallback: ytDlp,
     parseXml: (() => {
       const parser = new Parser()
       return (xml) => parser.parseString(xml)

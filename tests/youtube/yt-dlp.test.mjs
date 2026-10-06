@@ -125,3 +125,62 @@ test('client errors from yt-dlp surface classified', async () => {
   const client = createYtDlpClient({ timeoutMs: 1000, execFileImpl: fakeExec({ error }).execFileImpl })
   await assert.rejects(client.fetchMetadata(VIDEO_ID), (err) => err instanceof YouTubePermanentError && err.code === 'video_unavailable')
 })
+
+const CHANNEL_ID = 'UCaaaaaaaaaaaaaaaaaaaaaa'
+
+test('listUploads reads the Videos tab flat with approximate dates and maps it to feed entries', async () => {
+  const listing = {
+    entries: [
+      { id: 'video000001', title: 'Neu', timestamp: 1791279540 },
+      { id: 'video000002', title: 'Ohne Datum' },
+      { id: 'zu-kurz', title: 'Kaputt', timestamp: 1 },
+    ],
+  }
+  const { calls, execFileImpl } = fakeExec({ stdout: JSON.stringify(listing) })
+  const client = createYtDlpClient({ timeoutMs: 600_000, listTimeoutMs: 60_000, execFileImpl })
+
+  const entries = await client.listUploads(CHANNEL_ID)
+
+  assert.deepEqual(entries, [
+    { videoId: 'video000001', title: 'Neu', published: new Date(1791279540 * 1000).toISOString(), description: null, approximate: true },
+    { videoId: 'video000002', title: 'Ohne Datum', published: null, description: null, approximate: true },
+  ])
+  const { args, options } = calls[0]
+  assert.ok(args.includes('--flat-playlist') && args.includes('--dump-single-json'))
+  assert.equal(args[args.indexOf('--playlist-end') + 1], '15')
+  assert.equal(args[args.indexOf('--extractor-args') + 1], 'youtubetab:approximate_date')
+  assert.equal(args.at(-1), `https://www.youtube.com/channel/${CHANNEL_ID}/videos`)
+  assert.equal(options.timeout, 60_000, 'listing uses its own short timeout')
+
+  await assert.rejects(client.listUploads('@handle'), /Ungültige YouTube-Channel-ID/)
+  const broken = createYtDlpClient({ timeoutMs: 1000, execFileImpl: fakeExec({ stdout: 'kein json' }).execFileImpl })
+  await assert.rejects(broken.listUploads(CHANNEL_ID), (err) => err.code === 'youtube_fetch_failed')
+})
+
+test('fetchPublishTimes returns exact times and tolerates single unavailable videos', async () => {
+  const stdout = 'video000001 1791279540\nvideo000002 NA\n'
+  const { calls, execFileImpl } = fakeExec({ stdout })
+  const client = createYtDlpClient({ timeoutMs: 1000, listTimeoutMs: 30_000, execFileImpl })
+
+  assert.deepEqual(await client.fetchPublishTimes(['video000001', 'video000002']), {
+    video000001: new Date(1791279540 * 1000).toISOString(),
+  })
+  const { args, options } = calls[0]
+  assert.ok(args.includes('--skip-download') && args.includes('--ignore-errors'))
+  assert.equal(args[args.indexOf('--print') + 1], '%(id)s %(timestamp)s')
+  assert.deepEqual(args.slice(-2), ['https://www.youtube.com/watch?v=video000001', 'https://www.youtube.com/watch?v=video000002'])
+  assert.equal(options.timeout, 30_000)
+
+  // yt-dlp exits non-zero when one URL fails, but still printed the others.
+  const partialError = Object.assign(new Error('Command failed'), { stdout: 'video000001 1791279540\n', stderr: 'ERROR: [youtube] video000002: Private video' })
+  const partial = createYtDlpClient({ timeoutMs: 1000, execFileImpl: fakeExec({ error: partialError }).execFileImpl })
+  assert.deepEqual(Object.keys(await partial.fetchPublishTimes(['video000001', 'video000002'])), ['video000001'])
+
+  // Nothing printed at all: a real failure (e.g. bot check) is reported.
+  const blocked = Object.assign(new Error('Command failed'), { stdout: '', stderr: 'ERROR: HTTP Error 429: Too Many Requests' })
+  const blockedClient = createYtDlpClient({ timeoutMs: 1000, execFileImpl: fakeExec({ error: blocked }).execFileImpl })
+  await assert.rejects(blockedClient.fetchPublishTimes(['video000001']), (err) => err.code === 'youtube_blocked')
+
+  assert.deepEqual(await client.fetchPublishTimes([]), {})
+  await assert.rejects(client.fetchPublishTimes(['--exec=x']), /Ungültige YouTube-Video-ID/)
+})
