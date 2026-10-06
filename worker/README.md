@@ -14,17 +14,38 @@ Jede Minute (`TRANSCRIPTION_POLL_INTERVAL_SECONDS`) läuft eine Iteration:
    `pending_transcription`.
 2. Die **älteste** `pending_transcription`-Episode, die höchstens
    `TRANSCRIPTION_MAX_EPISODE_AGE_DAYS` alt ist, wird statusgeschützt beansprucht.
-3. Die Episode wird vollständig transkribiert (Range-Chunks in Reihenfolge). Nach jedem
-   Chunk wird die Lease erneuert. `transcribed` wird nur mit dem vollständig
-   zusammengesetzten Transkript gespeichert.
+3. Die Episode wird vollständig transkribiert:
+   - Das Audio wird komplett in ein temporäres Verzeichnis geladen und mit ffmpeg auf eine
+     sprachtaugliche MP3 umgerechnet (Mono, 16 kHz, 32 kbit/s – Whisper rechnet intern
+     ohnehin so). Eine 46-Minuten-Folge schrumpft so von ~44 MB auf ~11 MB.
+   - Passt das Ergebnis unter das Upload-Limit der Transkriptions-API (25 MB, entspricht
+     knapp 1 h 45 min), geht es in **einem** Upload raus.
+   - Längeres Audio wird per ffmpeg **nach Zeit** in eigenständige MP3-Segmente (≤ 20 MB)
+     geteilt und in Reihenfolge transkribiert – nie blind nach Bytes, denn solche Schnitte
+     treffen MP3-Frames und werden vom Anbieter abgelehnt.
+   - Die Lease wird nach Download, Umrechnung und jedem Segment erneuert. `transcribed` wird
+     nur mit dem vollständig zusammengesetzten Transkript gespeichert; das temporäre
+     Verzeichnis wird immer gelöscht.
 4. Gibt es weitere Arbeit, startet die nächste Iteration sofort.
 
 Fehler:
 
-- Permanente Fehler (Audio nicht erreichbar, keine Sprache, kein Range-Support) → `failed`.
+- Permanente Fehler (Audio nicht erreichbar, Datei nicht dekodierbar, keine Sprache) → `failed`.
+- Bei Ablehnung durch den Anbieter steht dessen Originalmeldung mit im Fehlertext
+  (statt nur „Provider returned 400“).
 - Temporäre Fehler → zurück auf `pending_transcription` mit
   „Temporärer Fehler (Versuch n/max)“.
 - Nach `TRANSCRIPTION_MAX_ATTEMPTS` Versuchen → `failed` mit dem letzten Fehlertext.
+
+Konfiguration der Transkription (optional, Standardwerte; je höchstens 840 s, damit die
+15-min-Lease zwischen den Schritten nie abläuft):
+
+- `TRANSCRIPTION_DOWNLOAD_TIMEOUT_SECONDS=600` – Download der kompletten Audiodatei
+  (bis Kanban #30: 120 s je 20-MB-Range-Request).
+- `TRANSCRIPTION_TRANSCODE_TIMEOUT_SECONDS=600` – ffmpeg-Umrechnung bzw. Segmentierung.
+- `FFMPEG_PATH=ffmpeg` – ffmpeg ist im Image installiert.
+
+Die Vercel-Route `/api/cron/transcribe-episodes` nutzt weiterhin die alte Range-Variante.
 
 Der Worker braucht nur ausgehende Verbindungen (Supabase, OpenRouter, Podcast-Feeds und Audio-Hosts, YouTube, Resend).
 
@@ -64,8 +85,8 @@ umbenennen, auf „Sofort“/„Täglich“ stellen, deaktivieren und löschen.
      `YOUTUBE_CAPTION_LANGUAGES`), sonst automatische Untertitel nur in der gesprochenen
      Originalsprache – nie maschinelle Übersetzungen. Untertitel gelten nur als brauchbar,
      wenn sie bis zum Videoende reichen (max. 60 s bzw. 5 % Lücke) und genug Text enthalten.
-   - Sonst wird das **komplette** Audio per yt-dlp als Mono-MP3 geladen und über den
-     bestehenden OpenRouter-STT-Weg (in Reihenfolge, chunkweise, alles oder nichts)
+   - Sonst wird die **komplette** Tonspur per yt-dlp geladen und wie Podcast-Audio
+     umgerechnet und über den OpenRouter-STT-Weg (alles oder nichts)
      transkribiert. Teil- oder Timeout-Ergebnisse werden nie gespeichert.
    - `episodes.transcript_source` hält `captions` bzw. `audio_stt` fest.
 3. Danach laufen YouTube-Episoden durch dieselbe Newsletter-Generierung und denselben

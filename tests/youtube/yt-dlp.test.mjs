@@ -67,24 +67,23 @@ test('downloadCaptions requests the selected track as json3 and cleans up its te
   assert.deepEqual(await readdir(tmpRoot), [])
 })
 
-test('downloadAudio extracts the complete audio as mono MP3 and returns it in memory', async () => {
-  const tmpRoot = await makeTmpRoot()
-  const { calls, execFileImpl } = fakeExec({ files: { 'audio.mp3': 'ID3-audio' } })
-  const client = createYtDlpClient({ timeoutMs: 1000, execFileImpl, tmpRoot })
+test('downloadAudio fetches the complete original audio track into the given work dir', async () => {
+  const dir = await makeTmpRoot()
+  const { calls, execFileImpl } = fakeExec({ files: { 'source.webm': 'opus-audio' } })
+  const client = createYtDlpClient({ timeoutMs: 1000, execFileImpl })
 
-  const audio = await client.downloadAudio(VIDEO_ID)
+  const audio = await client.downloadAudio(VIDEO_ID, { dir })
 
-  assert.equal(audio.audioBuffer.toString(), 'ID3-audio')
-  assert.deepEqual([audio.contentType, audio.ext], ['audio/mpeg', 'mp3'])
+  assert.deepEqual(audio, { path: path.join(dir, 'source.webm') })
   const args = calls[0].args
-  assert.ok(args.includes('--extract-audio'))
-  assert.equal(args[args.indexOf('--audio-format') + 1], 'mp3')
-  assert.equal(args[args.indexOf('--postprocessor-args') + 1], 'ExtractAudio:-ac 1')
-  assert.ok(!args.some((a) => /download-sections|max-filesize/.test(a)), 'no partial download options')
-  assert.deepEqual(await readdir(tmpRoot), [])
+  assert.equal(args[args.indexOf('-f') + 1], 'bestaudio/best')
+  assert.equal(args[args.indexOf('-o') + 1], path.join(dir, 'source.%(ext)s'))
+  assert.ok(!args.some((a) => /download-sections|max-filesize|extract-audio/.test(a)), 'no partial download, no own conversion')
 
-  const noFile = createYtDlpClient({ timeoutMs: 1000, execFileImpl: fakeExec().execFileImpl, tmpRoot })
-  await assert.rejects(noFile.downloadAudio(VIDEO_ID), (err) => err.code === 'audio_download_failed')
+  const empty = await makeTmpRoot()
+  const noFile = createYtDlpClient({ timeoutMs: 1000, execFileImpl: fakeExec().execFileImpl })
+  await assert.rejects(noFile.downloadAudio(VIDEO_ID, { dir: empty }), (err) => err.code === 'audio_download_failed')
+  await assert.rejects(noFile.downloadAudio(VIDEO_ID, {}), /Arbeitsverzeichnis/)
 })
 
 test('classifyYtDlpError maps stderr and process failures to actionable codes', () => {

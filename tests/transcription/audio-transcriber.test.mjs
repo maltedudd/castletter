@@ -3,8 +3,8 @@ import test from 'node:test'
 import {
   PermanentError,
   transcribeAudioFromUrl,
-  transcribeAudioBuffer,
   createOpenRouterChunkTranscriber,
+  withProviderDetail,
   getAudioExtension,
   extractTranscriptText,
 } from '../../src/lib/transcription/audio-transcriber.mjs'
@@ -159,44 +159,6 @@ test('large body without content-length is split in memory into ordered chunks',
   assert.deepEqual(progress, [{ index: 0, total: 2 }, { index: 1, total: 2 }])
 })
 
-test('transcribeAudioBuffer transcribes an in-memory file completely, in ordered chunks', async () => {
-  const { calls, transcribeChunk } = recordingTranscriber()
-  const progress = []
-
-  const small = await transcribeAudioBuffer({ audioBuffer: Buffer.alloc(10), transcribeChunk })
-  assert.equal(small, 'part-1')
-  assert.deepEqual([calls[0].ext, calls[0].contentType, calls[0].basename], ['mp3', 'audio/mpeg', 'episode'])
-
-  const large = await transcribeAudioBuffer({
-    audioBuffer: Buffer.alloc(OPENAI_TRANSCRIPTION_MAX_SIZE + 1),
-    transcribeChunk,
-    onChunkTranscribed: async (info) => progress.push(info),
-  })
-  assert.equal(large, 'part-2\n\npart-3')
-  assert.deepEqual(progress, [{ index: 0, total: 2 }, { index: 1, total: 2 }])
-})
-
-test('transcribeAudioBuffer never returns a partial transcript and rejects empty input/output', async () => {
-  let n = 0
-  const failingSecondChunk = async () => {
-    n++
-    if (n === 2) throw new Error('OpenRouter 502')
-    return `part-${n}`
-  }
-  await assert.rejects(
-    transcribeAudioBuffer({ audioBuffer: Buffer.alloc(OPENAI_TRANSCRIPTION_MAX_SIZE + 1), transcribeChunk: failingSecondChunk }),
-    (err) => !(err instanceof PermanentError) && /OpenRouter 502/.test(err.message)
-  )
-  await assert.rejects(
-    transcribeAudioBuffer({ audioBuffer: Buffer.alloc(0), transcribeChunk: async () => 'x' }),
-    (err) => err instanceof PermanentError && /leer/.test(err.message)
-  )
-  await assert.rejects(
-    transcribeAudioBuffer({ audioBuffer: Buffer.alloc(10), transcribeChunk: async () => ' ' }),
-    (err) => err instanceof PermanentError && /Keine Sprache erkannt/.test(err.message)
-  )
-})
-
 test('unreachable audio is a permanent error', async () => {
   const fetchImpl = async () => fakeResponse({ status: 404 })
   const { transcribeChunk } = recordingTranscriber()
@@ -270,6 +232,29 @@ test('createOpenRouterChunkTranscriber uploads a named file with the configured 
   assert.equal(requests[0].file.name, 'episode-part-1-of-2.mp3')
   assert.equal(requests[0].file.type, 'audio/mpeg')
   assert.equal(requests[0].file.size, 3)
+})
+
+test('provider errors from OpenRouter carry the upstream detail into the message', async () => {
+  const apiError = Object.assign(new Error('400 Provider returned 400'), {
+    status: 400,
+    error: { message: 'Provider returned 400', code: 400, metadata: { provider_name: 'Groq', raw: '{"error":{"message":"could not process file - is it a valid media file?"}}' } },
+  })
+  const openrouter = { audio: { transcriptions: { create: async () => { throw apiError } } } }
+  const transcribeChunk = createOpenRouterChunkTranscriber(openrouter, 'openai/whisper-large-v3')
+
+  await assert.rejects(
+    transcribeChunk(Buffer.from('abc'), { contentType: 'audio/mpeg', ext: 'mp3', basename: 'episode' }),
+    (err) =>
+      !(err instanceof PermanentError) &&
+      err.status === 400 &&
+      err.cause === apiError &&
+      err.message === '400 Provider returned 400 (Groq: {"error":{"message":"could not process file - is it a valid media file?"}})'
+  )
+
+  // Without upstream detail the original error is passed through unchanged.
+  const plain = new Error('fetch failed')
+  assert.equal(withProviderDetail(plain), plain)
+  assert.match(withProviderDetail({ message: 'x', error: { metadata: { raw: 'a'.repeat(1000) } } }).message, /^x \(a{300}\)$/)
 })
 
 test('getAudioExtension prefers URL extension, then content-type, then mp3', () => {

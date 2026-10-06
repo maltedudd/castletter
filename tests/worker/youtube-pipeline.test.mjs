@@ -4,10 +4,15 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { execFileSync } from 'node:child_process'
+import { copyFile, mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { runFeedCheck } from '../../worker/feed-jobs.mjs'
 import { runOnce } from '../../worker/worker-core.mjs'
 import { runGenerationOnce } from '../../worker/newsletter-jobs.mjs'
 import { createEpisodeTranscriber } from '../../worker/transcribers.mjs'
+import { createFfmpeg } from '../../src/lib/transcription/audio-file.mjs'
 import { buildYouTubeFeedUrl } from '../../src/lib/youtube/channel.mjs'
 import { YouTubePermanentError } from '../../src/lib/youtube/transcript.mjs'
 import { makeFakeSupabase } from '../helpers/fake-supabase.mjs'
@@ -19,6 +24,28 @@ const CAPTIONED = 'captioned01'
 const NO_CAPTIONS = 'nocaption01'
 const GONE = 'removed0001'
 const SHORT = 'shortclip01'
+const hasFfmpeg = (() => {
+  try {
+    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+})()
+const needsFfmpeg = { skip: hasFfmpeg ? false : 'ffmpeg nicht installiert' }
+const ffmpeg = createFfmpeg({ timeoutMs: 60_000 })
+
+/** A short real audio file standing in for the track yt-dlp downloads (opus/webm in reality). */
+let sourceAudio
+async function sourceAudioFile() {
+  if (!sourceAudio) {
+    const dir = await mkdtemp(path.join(tmpdir(), 'castletter-yt-src-'))
+    sourceAudio = path.join(dir, 'source.webm')
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=4', '-c:a', 'libopus', sourceAudio])
+  }
+  return sourceAudio
+}
+
 const MODEL_OUTPUT = '## Zusammenfassung\nKurz.\n\n## Hauptthemen\n- Thema\n\n## Wichtige Aussagen und Erkenntnisse\n- Aussage'
 
 const FEED_XML = `<feed><yt:channelId>${CHANNEL_ID}</yt:channelId><title>Kanal</title>
@@ -49,9 +76,11 @@ function fakeYouTube() {
       calls.push(['captions', videoId, track.language])
       return captionsDoc(600_000)
     },
-    async downloadAudio(videoId) {
+    async downloadAudio(videoId, { dir }) {
       calls.push(['audio', videoId])
-      return { audioBuffer: Buffer.from('mp3-bytes'), contentType: 'audio/mpeg', ext: 'mp3' }
+      const target = path.join(dir, 'source.webm')
+      await copyFile(await sourceAudioFile(), target)
+      return { path: target }
     },
   }
 }
@@ -76,7 +105,7 @@ function withDefaultsAndSubscriptionJoin(db) {
   }
 }
 
-test('YouTube channel source runs through the common pipeline to newsletter_ready without sending', async () => {
+test('YouTube channel source runs through the common pipeline to newsletter_ready without sending', needsFfmpeg, async () => {
   const db = makeFakeSupabase({
     podcast_subscriptions: [{
       id: 'yt-1',
@@ -99,7 +128,7 @@ test('YouTube channel source runs through the common pipeline to newsletter_read
   const youtube = fakeYouTube()
   const sttUploads = []
   const transcribeChunk = async (buffer, meta) => {
-    sttUploads.push({ size: buffer.length, ext: meta.ext })
+    sttUploads.push({ ext: meta.ext, contentType: meta.contentType, basename: meta.basename, isMp3: buffer.length > 0 })
     return 'Vollständiges STT-Transkript des Videos ohne Untertitel.'
   }
   const logs = []
@@ -133,6 +162,7 @@ test('YouTube channel source runs through the common pipeline to newsletter_read
     config: deps.config,
     transcribeChunk,
     youtube,
+    ffmpeg,
     fetchImpl: async () => assert.fail('YouTube episodes never download audio_url directly'),
   })
 
@@ -163,7 +193,11 @@ test('YouTube channel source runs through the common pipeline to newsletter_read
   assert.equal(byVideo[NO_CAPTIONS].status, 'newsletter_ready')
   assert.equal(byVideo[NO_CAPTIONS].transcript_source, 'audio_stt')
   assert.equal(byVideo[NO_CAPTIONS].transcript, 'Vollständiges STT-Transkript des Videos ohne Untertitel.')
-  assert.deepEqual(sttUploads, [{ size: 9, ext: 'mp3' }], 'only the uncaptioned video went through STT')
+  assert.deepEqual(
+    sttUploads,
+    [{ ext: 'mp3', contentType: 'audio/mpeg', basename: 'episode', isMp3: true }],
+    'only the uncaptioned video went through STT, converted and uploaded in one piece'
+  )
 
   assert.equal(byVideo[GONE].status, 'failed')
   assert.equal(byVideo[GONE].error_code, 'video_unavailable')
@@ -179,7 +213,7 @@ test('YouTube channel source runs through the common pipeline to newsletter_read
   assert.equal(sttLog.captionsReason, 'keine Untertitel vorhanden')
 })
 
-test('a temporary STT failure keeps a persisted reason and is retried until it succeeds', async () => {
+test('a temporary STT failure keeps a persisted reason and is retried until it succeeds', needsFfmpeg, async () => {
   const db = makeFakeSupabase({
     episodes: [{
       id: 'ep-1',
@@ -205,6 +239,7 @@ test('a temporary STT failure keeps a persisted reason and is retried until it s
   deps.transcribeEpisodeAudio = createEpisodeTranscriber({
     config: deps.config,
     youtube: fakeYouTube(),
+    ffmpeg,
     transcribeChunk: async () => {
       if (fail) throw new Error('OpenRouter 503 Service Unavailable')
       return 'Komplettes Transkript.'

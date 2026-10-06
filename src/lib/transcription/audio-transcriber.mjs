@@ -61,25 +61,8 @@ export async function transcribeAudioFromUrl({
   return assertSpeech(transcript)
 }
 
-/**
- * Transcribes an audio file that is already in memory (e.g. YouTube audio extracted to MP3),
- * with the same all-or-nothing chunking as `transcribeAudioFromUrl`.
- */
-export async function transcribeAudioBuffer({
-  audioBuffer,
-  contentType = 'audio/mpeg',
-  ext = 'mp3',
-  transcribeChunk,
-  onChunkTranscribed = async () => {},
-}) {
-  if (!audioBuffer || audioBuffer.length === 0) {
-    throw new PermanentError('Audiodatei ist leer')
-  }
-  const transcript = await transcribeBuffer({ audioBuffer, format: { contentType, ext }, transcribeChunk, onChunkTranscribed })
-  return assertSpeech(transcript)
-}
-
-function assertSpeech(transcript) {
+/** Rejects empty transcripts (music only / silence) as a permanent failure. */
+export function assertSpeech(transcript) {
   if (!transcript || transcript.trim().length === 0) {
     throw new PermanentError('Keine Sprache erkannt – die Episode enthält möglicherweise nur Musik')
   }
@@ -145,9 +128,30 @@ export function createOpenRouterChunkTranscriber(openrouter, model) {
       audioBuffer.byteOffset + audioBuffer.byteLength
     )
     const file = new File([arrayBuffer], `${basename}.${ext}`, { type: contentType })
-    const transcription = await openrouter.audio.transcriptions.create({ file, model })
+    let transcription
+    try {
+      transcription = await openrouter.audio.transcriptions.create({ file, model })
+    } catch (err) {
+      throw withProviderDetail(err)
+    }
     return extractTranscriptText(transcription)
   }
+}
+
+/**
+ * OpenRouter reports upstream failures as "Provider returned 400"; the provider's own message
+ * is in `error.metadata.raw`. Appends it (shortened) so logs and error_message are actionable.
+ * Returns the original error when there is no detail, keeping its type and status.
+ */
+export function withProviderDetail(err) {
+  const metadata = err?.error?.metadata
+  const raw = metadata?.raw
+  if (!raw) return err
+  const detail = (typeof raw === 'string' ? raw : JSON.stringify(raw)).replace(/\s+/g, ' ').trim().slice(0, 300)
+  const provider = typeof metadata.provider_name === 'string' ? `${metadata.provider_name}: ` : ''
+  const wrapped = new Error(`${err.message} (${provider}${detail})`, { cause: err })
+  wrapped.status = err.status
+  return wrapped
 }
 
 export function extractTranscriptText(transcription) {
