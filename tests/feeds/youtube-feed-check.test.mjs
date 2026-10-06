@@ -226,7 +226,10 @@ test('disabled sources (podcast or YouTube) are not checked; podcasts keep using
 
   assert.deepEqual(summary, { subscriptionsChecked: 1, newEpisodes: 1, errors: 0 })
   assert.deepEqual(requested, ['https://feeds.example/a.xml'])
-  // Podcast rows keep their previous shape (no YouTube columns written).
+  // Podcast episodes keep their previous shape (no YouTube columns written).
   assert.equal('source_type' in db.data.episodes[0], false)
-  assert.equal('last_check_status' in db.data.podcast_subscriptions[1], false)
+  // The check result is stored on every checked source; disabled sources stay untouched.
+  assert.equal(db.data.podcast_subscriptions[1].last_check_status, 'success')
+  assert.equal('last_check_status' in db.data.podcast_subscriptions[2], false)
+  assert.equal('last_check_status' in db.data.podcast_subscriptions[0], false)
 })
