@@ -140,7 +140,12 @@ test('checkAllFeeds inserts new episodes per subscription and logs each feed', a
 
   const summary = await checkAllFeeds(deps)
 
-  assert.deepEqual(summary, { subscriptionsChecked: 3, newEpisodes: 2, errors: 2 })
+  const { issues, ...counts } = summary
+  assert.deepEqual(counts, { subscriptionsChecked: 3, newEpisodes: 2, errors: 2 })
+  assert.deepEqual(issues, [
+    { source: 'Kaputt', error: 'Non-whitespace before first tag.' },
+    { source: 'Weg', error: 'HTTP 404 fetching feed' },
+  ])
   assert.deepEqual(db.data.episodes.map((e) => e.guid).sort(), ['known', 'new-1', 'new-2'])
   assert.ok(deps.requested.every((r) => r.hasSignal))
   const logs = Object.fromEntries(db.data.feed_check_logs.map((l) => [l.subscription_id, l]))

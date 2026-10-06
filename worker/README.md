@@ -80,6 +80,20 @@ umbenennen, auf „Sofort“/„Täglich“ stellen, deaktivieren und löschen.
    HTTP 429), wird das Video in diesem Lauf zurückgehalten, am Kanal als Fehler angezeigt und
    beim nächsten Lauf erneut geprüft. Ergebnis und Fehler stehen in `feed_check_logs` und
    direkt am Kanal (`last_checked_at`, `last_check_status`, `last_check_error`).
+
+   **Ausweichabruf bei gestörtem Feed:** YouTubes Feed-Endpunkt liefert phasenweise für alle
+   Kanäle HTTP 404 (zuletzt 05./06.10.2026 rund zwölf Stunden). Scheitert der Feed (HTTP-Fehler,
+   Netzwerk, kein gültiger Feed), liest der Worker die 15 neuesten Uploads per yt-dlp vom
+   Reiter „Videos“ des Kanals (ohne Shorts und Livestreams). Die Daten dort sind nur
+   ungefähr („vor 2 Tagen“); liegt ein noch nicht importiertes Video bis zu 48 h um den
+   Stichtag, wird das exakte Veröffentlichungsdatum nachgefragt, sonst wird das Video bis zum
+   nächsten Lauf zurückgehalten. Sonst gelten dieselben Regeln wie beim Feed. Ein erfolgreicher
+   Ausweichabruf zählt als erfolgreicher Check (Hinweis in `feed_check_logs.error_message` und
+   im Log); scheitern beide, stehen beide Gründe am Kanal. Der Vercel-Cron hat keinen
+   Ausweichabruf.
+
+   Der Log-Eintrag `feed_check` nennt unter `issues` jede betroffene Quelle mit Grund
+   (`error`) bzw. Hinweis (`note`).
 2. **Transkription** (nur im Worker; die Vercel-Route überspringt YouTube-Episoden):
    - Zuerst vollständige YouTube-Untertitel: manuelle Untertitel (Originalsprache, dann
      `YOUTUBE_CAPTION_LANGUAGES`), sonst automatische Untertitel nur in der gesprochenen

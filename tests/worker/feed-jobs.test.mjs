@@ -28,6 +28,39 @@ test('runFeedCheck imports new episodes and logs a summary', async () => {
   assert.deepEqual(logs, [{ level: 'info', msg: 'feed_check', subscriptionsChecked: 1, newEpisodes: 1, errors: 0 }])
 })
 
+test('runFeedCheck passes the YouTube fallback through and logs affected sources', async () => {
+  const channelId = 'UCaaaaaaaaaaaaaaaaaaaaaa'
+  const db = makeFakeSupabase({
+    podcast_subscriptions: [{ id: 'yt-1', source_type: 'youtube', youtube_channel_id: channelId, title: 'Kanal', created_at: '2026-09-01T00:00:00.000Z' }],
+    episodes: [],
+    feed_check_logs: [],
+  })
+  const logs = []
+  const listed = []
+
+  const summary = await runFeedCheck({
+    supabase: db,
+    now: () => NOW,
+    log: (level, msg, data) => logs.push({ level, msg, ...data }),
+    fetchImpl: async (url) => url.includes('/shorts/')
+      ? { status: 303, headers: new Headers({ location: 'https://www.youtube.com/watch?v=video000001' }) }
+      : { ok: false, status: 404, text: async () => '' },
+    parseXml: async () => assert.fail('no podcasts here'),
+    youtubeFallback: {
+      listUploads: async (id) => {
+        listed.push(id)
+        return [{ videoId: 'video000001', title: 'Neu', published: '2026-10-04T08:00:00.000Z', description: null, approximate: true }]
+      },
+      fetchPublishTimes: async () => assert.fail('far from the cut-off, no exact lookup'),
+    },
+  })
+
+  assert.deepEqual(listed, [channelId])
+  assert.equal(summary.newEpisodes, 1)
+  assert.equal(logs[0].level, 'info')
+  assert.deepEqual(logs[0].issues, [{ source: 'Kanal', note: 'YouTube-Feed nicht erreichbar (HTTP 404) – Störung bei YouTube oder Kanal gelöscht – Uploads per yt-dlp vom Videos-Tab gelesen' }])
+})
+
 test('interval gate is due on start, then only after the interval since the last success', () => {
   const gate = createIntervalGate(30 * 60 * 1000)
   const at = (min) => new Date(NOW.getTime() + min * 60 * 1000)
