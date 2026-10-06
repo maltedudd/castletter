@@ -231,10 +231,20 @@ export function parseYouTubeFeed(xml) {
   }
 
   return {
-    channelId: textOf(head, 'yt:channelId'),
+    channelId: normalizeFeedChannelId(textOf(head, 'yt:channelId')),
     title: textOf(head, 'title'),
     entries,
   }
+}
+
+/**
+ * The feed head carries the channel ID without its "UC" prefix (`<yt:channelId>Dx6L…`),
+ * the entries with it. Restores the stable form; anything else is returned unchanged so a
+ * real mismatch is still detected.
+ */
+function normalizeFeedChannelId(value) {
+  if (!value || isYouTubeChannelId(value)) return value
+  return isYouTubeChannelId(`UC${value}`) ? `UC${value}` : value
 }
 
 function textOf(xml, tag) {

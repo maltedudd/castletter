@@ -153,7 +153,7 @@ test('network errors and invalid feeds also use the fallback; a channel mismatch
   const mismatchFallback = fallback({ uploads: [upload(1, HOUR)] })
   await checkAllFeeds(deps(mismatch, {
     feedStatus: 200,
-    feedBody: '<feed><yt:channelId>UCbbbbbbbbbbbbbbbbbbbbbb</yt:channelId><title>X</title></feed>',
+    feedBody: '<feed><yt:channelId>bbbbbbbbbbbbbbbbbbbbbb</yt:channelId><title>X</title></feed>',
     youtubeFallback: mismatchFallback,
   }))
   assert.deepEqual(mismatchFallback.calls, [])

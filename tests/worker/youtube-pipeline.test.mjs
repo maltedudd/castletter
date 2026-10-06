@@ -48,7 +48,7 @@ async function sourceAudioFile() {
 
 const MODEL_OUTPUT = '## Zusammenfassung\nKurz.\n\n## Hauptthemen\n- Thema\n\n## Wichtige Aussagen und Erkenntnisse\n- Aussage'
 
-const FEED_XML = `<feed><yt:channelId>${CHANNEL_ID}</yt:channelId><title>Kanal</title>
+const FEED_XML = `<feed><yt:channelId>${CHANNEL_ID.slice(2)}</yt:channelId><title>Kanal</title>
   ${[[CAPTIONED, '2026-10-03T08:00:00+00:00'], [NO_CAPTIONS, '2026-10-03T09:00:00+00:00'], [GONE, '2026-10-03T10:00:00+00:00'], [SHORT, '2026-10-03T11:00:00+00:00']]
     .map(([id, published]) => `<entry><id>yt:video:${id}</id><yt:videoId>${id}</yt:videoId><title>Video ${id}</title><published>${published}</published></entry>`)
     .join('')}
