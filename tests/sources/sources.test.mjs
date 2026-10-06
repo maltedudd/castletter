@@ -32,16 +32,17 @@ function makeFetch(routes) {
 
 // ─── Source type selection ───────────────────────────────────────────
 
-test('source types are podcast RSS and YouTube channel', () => {
-  assert.deepEqual(SOURCE_TYPES, ['podcast', 'youtube'])
+test('source types are podcast RSS, YouTube channel and website RSS', () => {
+  assert.deepEqual(SOURCE_TYPES, ['podcast', 'youtube', 'website'])
   assert.equal(isSourceType('podcast'), true)
   assert.equal(isSourceType('youtube'), true)
+  assert.equal(isSourceType('website'), true)
   assert.equal(isSourceType('rss'), false)
   assert.equal(isSourceType(undefined), false)
 })
 
 test('the add flow starts without a selected source type', () => {
-  assert.deepEqual(initialAddSourceState, { type: null, input: '', preview: null, error: null })
+  assert.deepEqual(initialAddSourceState, { type: null, input: '', preview: null, error: null, suggestedType: null })
 })
 
 test('selecting a source type shows that type without input or preview', () => {
@@ -52,6 +53,9 @@ test('selecting a source type shows that type without input or preview', () => {
 
   const youtube = addSourceReducer(initialAddSourceState, { type: 'selectType', sourceType: 'youtube' })
   assert.equal(youtube.type, 'youtube')
+
+  const website = addSourceReducer(initialAddSourceState, { type: 'selectType', sourceType: 'website' })
+  assert.equal(website.type, 'website')
 })
 
 test('switching the source type discards input, preview and error of the previous type', () => {
@@ -64,7 +68,7 @@ test('switching the source type discards input, preview and error of the previou
   })
 
   state = addSourceReducer(state, { type: 'selectType', sourceType: 'youtube' })
-  assert.deepEqual(state, { type: 'youtube', input: '', preview: null, error: null })
+  assert.deepEqual(state, { type: 'youtube', input: '', preview: null, error: null, suggestedType: null })
 })
 
 test('re-selecting the current type keeps the entered data', () => {
@@ -90,7 +94,7 @@ test('cancelling the preview keeps type and input, reset clears everything but t
   assert.equal(cancelled.preview, null)
   assert.equal(cancelled.input, 'https://example.com/feed.xml')
 
-  assert.deepEqual(addSourceReducer(state, { type: 'reset' }), { type: 'podcast', input: '', preview: null, error: null })
+  assert.deepEqual(addSourceReducer(state, { type: 'reset' }), { type: 'podcast', input: '', preview: null, error: null, suggestedType: null })
 })
 
 // ─── Podcast add flow ────────────────────────────────────────────────
@@ -243,4 +247,83 @@ test('buildSourceInsert keeps podcast rows free of YouTube columns', () => {
   )
   assert.equal('source_type' in row, false)
   assert.equal('youtube_channel_id' in row, false)
+})
+
+// ─── Website (RSS) add flow ──────────────────────────────────────────
+
+const WEBSITE_API = {
+  title: 'Stadtblog',
+  description: 'Nachrichten aus der Stadt',
+  imageUrl: 'https://blog.example.com/logo.png',
+  feedUrl: 'https://blog.example.com/feed',
+  feedFormat: 'atom',
+  contentMode: 'excerpt',
+}
+
+test('website RSS: validates the feed, previews format and content type and stores a website source', async () => {
+  const { fetchImpl, calls } = makeFetch({ '/api/websites/validate': jsonResponse(WEBSITE_API) })
+  const resolved = await resolveSourcePreview({ type: 'website', input: ' blog.example.com ', fetchImpl })
+
+  assert.deepEqual(calls, [{ url: '/api/websites/validate', method: 'POST', body: { url: 'blog.example.com' } }])
+  assert.deepEqual(resolved, {
+    ok: true,
+    preview: {
+      type: 'website',
+      title: 'Stadtblog',
+      description: 'Nachrichten aus der Stadt',
+      imageUrl: 'https://blog.example.com/logo.png',
+      feedUrl: 'https://blog.example.com/feed',
+      channelId: null,
+      feedFormat: 'atom',
+      contentMode: 'excerpt',
+    },
+  })
+
+  const supabase = makeFakeSupabase({ podcast_subscriptions: [] })
+  assert.deepEqual(await saveSource({ supabase, userId: USER_ID, preview: resolved.preview }), { ok: true })
+  assert.deepEqual(supabase.data.podcast_subscriptions[0], {
+    id: 'podcast_subscriptions-1',
+    user_id: USER_ID,
+    feed_url: 'https://blog.example.com/feed',
+    title: 'Stadtblog',
+    description: 'Nachrichten aus der Stadt',
+    cover_image_url: 'https://blog.example.com/logo.png',
+    source_type: 'website',
+  })
+})
+
+test('website RSS: translated error keys and a suggested source type come from the API', async () => {
+  const podcast = makeFetch({ '/api/websites/validate': jsonResponse({ errorKey: 'websiteErrorIsPodcast', suggestedType: 'podcast' }, 422) })
+  assert.deepEqual(
+    await resolveSourcePreview({ type: 'website', input: 'https://pod.example.com/feed', fetchImpl: podcast.fetchImpl }),
+    { ok: false, errorKey: 'websiteErrorIsPodcast', suggestedType: 'podcast' }
+  )
+  const invalid = makeFetch({ '/api/websites/validate': jsonResponse({ errorKey: 'websiteErrorInvalidFeed', suggestedType: 'rss' }, 422) })
+  assert.deepEqual(
+    await resolveSourcePreview({ type: 'website', input: 'https://x.example', fetchImpl: invalid.fetchImpl }),
+    { ok: false, errorKey: 'websiteErrorInvalidFeed' }
+  )
+  const empty = makeFetch({ '/api/websites/validate': jsonResponse({}, 500) })
+  assert.deepEqual(
+    await resolveSourcePreview({ type: 'website', input: 'https://x.example', fetchImpl: empty.fetchImpl }),
+    { ok: false, errorKey: 'websiteErrorFetch' }
+  )
+})
+
+test('accepting a suggested type switches to it and keeps the entered address', () => {
+  let state = addSourceReducer(initialAddSourceState, { type: 'selectType', sourceType: 'website' })
+  state = addSourceReducer(state, { type: 'setInput', input: 'https://pod.example.com/feed' })
+  state = addSourceReducer(state, { type: 'setError', error: 'Das ist ein Podcast-Feed', suggestedType: 'podcast' })
+  assert.equal(state.suggestedType, 'podcast')
+
+  state = addSourceReducer(state, { type: 'switchType', sourceType: 'podcast' })
+  assert.deepEqual(state, { type: 'podcast', input: 'https://pod.example.com/feed', preview: null, error: null, suggestedType: null })
+  assert.equal(addSourceReducer(state, { type: 'switchType', sourceType: 'rss' }), state)
+  assert.equal(addSourceReducer(state, { type: 'setError', error: 'x', suggestedType: 'rss' }).suggestedType, null)
+})
+
+test('website RSS: a duplicate feed reports the website-specific message', async () => {
+  const supabase = { from: () => ({ insert: async () => ({ error: { code: '23505', message: 'duplicate' } }) }) }
+  const preview = { type: 'website', title: 'W', description: null, imageUrl: null, feedUrl: 'https://blog.example.com/feed', channelId: null }
+  assert.deepEqual(await saveSource({ supabase, userId: USER_ID, preview }), { ok: false, errorKey: 'websiteErrorAlreadyAdded' })
 })
