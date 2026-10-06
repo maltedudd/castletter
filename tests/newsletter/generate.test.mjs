@@ -86,6 +86,20 @@ test('prompt carries podcast, episode and transcript; long transcripts are trunc
   assert.ok(!long.includes('x'.repeat(MAX_TRANSCRIPT_CHARS + 1)))
 })
 
+test('buildNewsletterPrompt uses website wording for articles, keeps the section headings and forbids additions', () => {
+  const prompt = buildNewsletterPrompt({ podcastTitle: 'Stadtblog', episodeTitle: 'Wärmenetz', transcript: 'Artikeltext', sourceType: 'website' })
+  assert.match(prompt, /^Du fasst einen Artikel einer Website zusammen\./)
+  assert.match(prompt, /ausschließlich auf den folgenden Text/)
+  assert.match(prompt, /\nWebsite: Stadtblog\nArtikel: Wärmenetz\n\nText:\nArtikeltext\n/)
+  assert.doesNotMatch(prompt, /Podcast|Transkript/)
+  for (const heading of ['Zusammenfassung', 'Hauptthemen', 'Wichtige Aussagen und Erkenntnisse', 'Tipps und Methoden', 'Zitate und Begriffe', 'Wer sagt was', 'Einordnung']) {
+    assert.ok(prompt.includes(`\n## ${heading}\n`), heading)
+  }
+  // YouTube and unknown types keep the podcast prompt unchanged.
+  const base = { podcastTitle: 'P', episodeTitle: 'E', transcript: 'T' }
+  assert.equal(buildNewsletterPrompt({ ...base, sourceType: 'youtube' }), buildNewsletterPrompt(base))
+})
+
 test('parseNewsletter extracts all sections', () => {
   assert.deepEqual(parseNewsletter(MODEL_OUTPUT), {
     intro: 'Es geht um Reformen. Und um Gerechtigkeit.',

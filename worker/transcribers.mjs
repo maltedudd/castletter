@@ -1,8 +1,9 @@
 // Chooses the transcription path per episode: podcast episodes download their audio URL,
 // YouTube videos go captions-first with a full-audio STT fallback. Audio of both is converted
 // with ffmpeg to a small speech-grade MP3 and uploaded whole (split by time only when still
-// too large). Both end in the same `transcribed` state, so newsletter generation and
-// delivery stay source-agnostic.
+// too large). Website articles need no audio at all: their complete public text comes from the
+// feed or the linked article page. All end in the same `transcribed` state, so newsletter
+// generation and delivery stay source-agnostic.
 
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -14,15 +15,20 @@ import {
   YouTubePermanentError,
   transcribeYouTubeVideo,
 } from '../src/lib/youtube/transcript.mjs'
+import { resolveWebsiteContent } from '../src/lib/websites/content.mjs'
 
 /**
  * Returns the worker's `transcribeEpisodeAudio(episode, onChunkTranscribed, onProgress)`.
  * `youtube` is the yt-dlp client (`fetchMetadata`, `downloadCaptions`, `downloadAudio`),
- * `ffmpeg` the runner from `createFfmpeg`. Every episode gets its own temp dir, removed
- * afterwards whatever the outcome.
+ * `ffmpeg` the runner from `createFfmpeg`. Every audio episode gets its own temp dir, removed
+ * afterwards whatever the outcome. `lookup` (DNS) guards article fetches against internal hosts.
  */
-export function createEpisodeTranscriber({ config, transcribeChunk, youtube, ffmpeg, fetchImpl = fetch, tmpRoot = tmpdir() }) {
+export function createEpisodeTranscriber({ config, transcribeChunk, youtube, ffmpeg, fetchImpl = fetch, lookup = null, tmpRoot = tmpdir() }) {
   return async function transcribeEpisodeAudio(episode, onChunkTranscribed, onProgress = async () => {}) {
+    if (episode.source_type === 'website') {
+      return resolveWebsiteContent({ episode, fetchImpl, lookup })
+    }
+
     if (episode.source_type === 'youtube' && !isYouTubeVideoId(episode.youtube_video_id)) {
       throw new YouTubePermanentError(YOUTUBE_ERROR_CODES.videoUnavailable, 'Episode hat keine gültige YouTube-Video-ID')
     }

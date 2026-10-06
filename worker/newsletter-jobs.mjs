@@ -16,7 +16,7 @@ import {
 import { getEpisodeAgeCutoff } from './worker-core.mjs'
 
 const GENERATION_COLUMNS =
-  'id, title, transcript, published_at, error_message, podcast_subscriptions!inner(title, user_id)'
+  'id, title, transcript, published_at, error_message, source_type, podcast_subscriptions!inner(title, user_id)'
 
 /**
  * Generates the newsletter for the oldest `transcribed` episode inside the age cutoff and

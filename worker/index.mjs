@@ -1,8 +1,10 @@
-// Castletter worker: (if enabled) imports new episodes/videos from the podcast feeds and
-// YouTube channels, polls Supabase for pending episodes and transcribes them completely
-// (YouTube: captions first, full-audio STT fallback), then (if enabled)
+// Castletter worker: (if enabled) imports new episodes/videos/articles from the podcast feeds,
+// YouTube channels and website feeds, polls Supabase for pending episodes and transcribes them
+// completely (YouTube: captions first, full-audio STT fallback; websites: public full text
+// without audio), then (if enabled)
 // generates their newsletters and sends them — without the Vercel function time limit.
 
+import { lookup } from 'node:dns/promises'
 import { writeFile } from 'node:fs/promises'
 import { createClient } from '@supabase/supabase-js'
 import OpenAI from 'openai'
@@ -65,6 +67,7 @@ async function main() {
     config,
     transcribeChunk,
     youtube: ytDlp,
+    lookup,
     ffmpeg: createFfmpeg({ binary: config.ffmpegPath, timeoutMs: config.transcodeTimeoutMs }),
   })
 

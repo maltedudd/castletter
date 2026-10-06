@@ -34,17 +34,41 @@ export function getPodcastRef(episode) {
   return (Array.isArray(ref) ? ref[0] : ref) ?? undefined
 }
 
-export function buildNewsletterPrompt({ podcastTitle, episodeTitle, transcript: fullTranscript }) {
+// Source-specific wording; the section headings stay identical so parsing, review and
+// delivery are the same for every source type.
+const PROMPT_WORDING = {
+  podcast: {
+    intro: 'Du fasst eine Podcast-Episode zusammen. Dein Ziel ist, mir das Wissen aus dem Podcast so zu vermitteln, als hättest du ihn für mich gehört. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln.',
+    sourceLabel: 'Podcast',
+    itemLabel: 'Episode',
+    textLabel: 'Transkript',
+    topics: 'Die Hauptthemen des Podcasts als Stichpunkte',
+    quotes: 'Wichtige Zitate oder Begriffe, die im Podcast hervorgehoben wurden',
+    speakers: 'Falls der Podcast ein Interview ist: Wer sagt was? Rollen oder Perspektiven angeben. Falls kein Interview, diese Sektion weglassen.',
+  },
+  website: {
+    intro: 'Du fasst einen Artikel einer Website zusammen. Dein Ziel ist, mir das Wissen aus dem Artikel so zu vermitteln, als hättest du ihn für mich gelesen. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln. Stütze dich ausschließlich auf den folgenden Text und ergänze nichts, was nicht darin steht.',
+    sourceLabel: 'Website',
+    itemLabel: 'Artikel',
+    textLabel: 'Text',
+    topics: 'Die Hauptthemen des Artikels als Stichpunkte',
+    quotes: 'Wichtige Zitate oder Begriffe, die im Artikel hervorgehoben wurden',
+    speakers: 'Falls der Artikel ein Interview ist oder mehrere Stimmen zitiert: Wer sagt was? Rollen oder Perspektiven angeben. Sonst diese Sektion weglassen.',
+  },
+}
+
+export function buildNewsletterPrompt({ podcastTitle, episodeTitle, transcript: fullTranscript, sourceType = 'podcast' }) {
+  const wording = PROMPT_WORDING[sourceType] ?? PROMPT_WORDING.podcast
   const transcript = fullTranscript.length > MAX_TRANSCRIPT_CHARS
-    ? fullTranscript.slice(0, MAX_TRANSCRIPT_CHARS) + '\n\n[Transkript gekürzt]'
+    ? fullTranscript.slice(0, MAX_TRANSCRIPT_CHARS) + `\n\n[${wording.textLabel} gekürzt]`
     : fullTranscript
 
-  return `Du fasst eine Podcast-Episode zusammen. Dein Ziel ist, mir das Wissen aus dem Podcast so zu vermitteln, als hättest du ihn für mich gehört. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln.
+  return `${wording.intro}
 
-Podcast: ${podcastTitle}
-Episode: ${episodeTitle}
+${wording.sourceLabel}: ${podcastTitle}
+${wording.itemLabel}: ${episodeTitle}
 
-Transkript:
+${wording.textLabel}:
 ${transcript}
 
 Erstelle folgende Struktur (exakt diese Überschriften verwenden):
@@ -53,7 +77,7 @@ Erstelle folgende Struktur (exakt diese Überschriften verwenden):
 [Prägnante Zusammenfassung in max. 5 Sätzen – für einen schnellen Überblick]
 
 ## Hauptthemen
-- [Die Hauptthemen des Podcasts als Stichpunkte]
+- [${wording.topics}]
 
 ## Wichtige Aussagen und Erkenntnisse
 - [Alle wichtigen Aussagen und Erkenntnisse – logisch gruppiert]
@@ -62,10 +86,10 @@ Erstelle folgende Struktur (exakt diese Überschriften verwenden):
 - [Konkrete Tipps, Methoden, Handlungsempfehlungen oder Frameworks – falls vorhanden. Wenn nicht vorhanden, diese Sektion weglassen.]
 
 ## Zitate und Begriffe
-- [Wichtige Zitate oder Begriffe, die im Podcast hervorgehoben wurden – falls vorhanden. Wenn nicht vorhanden, diese Sektion weglassen.]
+- [${wording.quotes} – falls vorhanden. Wenn nicht vorhanden, diese Sektion weglassen.]
 
 ## Wer sagt was
-- [Falls der Podcast ein Interview ist: Wer sagt was? Rollen oder Perspektiven angeben. Falls kein Interview, diese Sektion weglassen.]
+- [${wording.speakers}]
 
 ## Einordnung
 [Kritische Reflexion oder Kontext – wie das Gesagte einzuordnen ist. 2-3 Sätze. Falls nicht sinnvoll, diese Sektion weglassen.]
@@ -112,6 +136,7 @@ export async function generateNewsletterForEpisode({ supabase, openrouter, model
       podcastTitle: getPodcastRef(episode)?.title || 'Podcast',
       episodeTitle: episode.title,
       transcript: episode.transcript,
+      sourceType: episode.source_type,
     })
     const completion = await openrouter.chat.completions.create(
       buildNewsletterCompletionOptions(model, [{ role: 'user', content: prompt }])

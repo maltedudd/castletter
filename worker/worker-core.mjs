@@ -14,7 +14,7 @@ export const STALE_RESET_MESSAGE =
 export const RELEASE_MESSAGE = 'Worker gestoppt – Episode wird erneut versucht'
 
 const CANDIDATE_COLUMNS =
-  'id, audio_url, title, transcript, transcription_attempts, error_message, source_type, youtube_video_id'
+  'id, audio_url, title, transcript, transcription_attempts, error_message, source_type, youtube_video_id, article_url, feed_content'
 
 /** Thrown when another run took over the episode; the worker must then write nothing. */
 export class LeaseLostError extends Error {
@@ -130,7 +130,8 @@ async function processClaimedEpisode(deps, episode, active) {
   const startedAt = Date.now()
   log('info', 'episode_claimed', { episodeId: episode.id, title: episode.title, attempt: active.attempt })
 
-  const isYouTube = episode.source_type === 'youtube'
+  // YouTube videos and website articles record where their text came from and why they failed.
+  const tracksSource = episode.source_type === 'youtube' || episode.source_type === 'website'
   try {
     let transcript = episode.transcript
     let transcriptSource = null
@@ -145,7 +146,7 @@ async function processClaimedEpisode(deps, episode, active) {
         // Keep-alive between long non-chunk stages (YouTube metadata/caption/audio download).
         () => refreshLease(deps, active)
       )
-      // Podcast transcribers return the text, YouTube ones `{ transcript, source }`.
+      // Podcast transcribers return the text, YouTube/website ones `{ transcript, source }`.
       transcript = typeof result === 'string' ? result : result?.transcript
       transcriptSource = typeof result === 'string' ? null : result?.source ?? null
       captionsReason = typeof result === 'string' ? undefined : result?.captionsReason
@@ -160,7 +161,7 @@ async function processClaimedEpisode(deps, episode, active) {
       status: 'transcribed',
       transcript,
       error_message: null,
-      ...(isYouTube ? { error_code: null, transcript_source: transcriptSource } : {}),
+      ...(tracksSource ? { error_code: null, transcript_source: transcriptSource } : {}),
     })
     if (!saved) throw new LeaseLostError(episode.id)
 
@@ -168,7 +169,7 @@ async function processClaimedEpisode(deps, episode, active) {
       episodeId: episode.id,
       chars: transcript.length,
       seconds: Math.round((Date.now() - startedAt) / 1000),
-      ...(isYouTube ? { source: transcriptSource, captionsReason } : {}),
+      ...(tracksSource ? { source: transcriptSource, ...(captionsReason ? { captionsReason } : {}) } : {}),
     })
     return 'transcribed'
   } catch (err) {
@@ -178,8 +179,8 @@ async function processClaimedEpisode(deps, episode, active) {
     }
 
     const message = err instanceof Error ? err.message : String(err)
-    // YouTube failures carry a machine-readable reason that the admin UI shows.
-    const errorCode = isYouTube ? { error_code: typeof err?.code === 'string' ? err.code : 'transcription_failed' } : {}
+    // YouTube and website failures carry a machine-readable reason that the sources UI shows.
+    const errorCode = tracksSource ? { error_code: typeof err?.code === 'string' ? err.code : 'transcription_failed' } : {}
     if (err instanceof PermanentError) {
       await casUpdate(supabase, active, { status: 'failed', error_message: message, ...errorCode })
       log('error', 'episode_failed', { episodeId: episode.id, error: message, ...errorCode })

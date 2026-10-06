@@ -14,7 +14,8 @@
  * @property {string[]} quotes
  * @property {string[]} speakers
  * @property {string | null} reflection
- * @property {string} audioUrl
+ * @property {string} audioUrl  Audio/video link, or the article link for website sources
+ * @property {'podcast' | 'youtube' | 'website'} [sourceType]
  */
 
 
@@ -49,6 +50,10 @@ const strings = {
     sectionSpeakers: 'Wer sagt was',
     sectionReflection: 'Einordnung',
     listenButton: 'Episode anhören',
+    readButton: 'Artikel lesen',
+    immediateArticleSubject: 'Neuer Artikel',
+    immediateArticleHeaderTagline: 'Neuer Artikel, frisch zusammengefasst',
+    immediateArticleGreetingBody: (source) => `gerade ist ein neuer Artikel von „${source}“ erschienen. Hier ist deine Zusammenfassung:`,
     settingsLink: 'Einstellungen ändern',
   },
   en: {
@@ -68,6 +73,10 @@ const strings = {
     sectionSpeakers: 'Who says what',
     sectionReflection: 'Context',
     listenButton: 'Listen to episode',
+    readButton: 'Read article',
+    immediateArticleSubject: 'New article',
+    immediateArticleHeaderTagline: 'New article, freshly summarized',
+    immediateArticleGreetingBody: (source) => `a new article from “${source}” just came out. Here is your summary:`,
     settingsLink: 'Change settings',
   },
 }
@@ -79,11 +88,18 @@ export function getEmailSubject(locale = 'de') {
 /**
  * Title, header tagline and greeting text for the mail kind: the daily digest keeps the
  * "daily highlights" wording, an immediate mail (exactly one episode) announces the new
- * episode instead. Texts are raw; callers escape them for HTML.
+ * episode (or website article) instead. Texts are raw; callers escape them for HTML.
  */
 function getIntro(s, newsletters, mode) {
   if (mode === 'immediate' && newsletters.length === 1) {
     const podcast = newsletters[0].podcastTitle
+    if (isArticle(newsletters[0])) {
+      return {
+        title: `${s.immediateArticleSubject}: ${podcast}`,
+        tagline: s.immediateArticleHeaderTagline,
+        body: s.immediateArticleGreetingBody(podcast),
+      }
+    }
     return {
       title: `${s.immediateSubject}: ${podcast}`,
       tagline: s.immediateHeaderTagline,
@@ -91,6 +107,15 @@ function getIntro(s, newsletters, mode) {
     }
   }
   return { title: s.subject, tagline: s.headerTagline, body: s.greetingBody }
+}
+
+/** Website articles link to the article ("read"), podcast episodes and videos to the audio/video. */
+function isArticle(item) {
+  return item.sourceType === 'website'
+}
+
+function linkLabel(item, s) {
+  return isArticle(item) ? s.readButton : s.listenButton
 }
 
 export function generateEmailHTML(
@@ -211,7 +236,7 @@ function generateEpisodeBlock(item, s) {
           <tr>
             <td style="padding: 15px 20px 20px;">
               <a href="${escapeHtml(item.audioUrl)}" style="display: inline-block; background-color: ${COLORS.secondary}; color: ${COLORS.bg}; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">
-                &#9654; ${escapeHtml(s.listenButton)}
+                ${isArticle(item) ? '&#8594;' : '&#9654;'} ${escapeHtml(linkLabel(item, s))}
               </a>
             </td>
           </tr>
@@ -276,7 +301,7 @@ export function generateEmailPlainText(
     }
 
     sections.push('')
-    sections.push(`→ ${s.listenButton}: ${item.audioUrl}`)
+    sections.push(`→ ${linkLabel(item, s)}: ${item.audioUrl}`)
 
     return sections.join('\n')
   })

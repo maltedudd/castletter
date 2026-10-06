@@ -53,3 +53,21 @@ test('immediate mode with several episodes falls back to the digest wording', ()
   const html = generateEmailHTML('m@x.de', TWO, 'https://s', 'de', 'immediate')
   assert.match(html, /Deine täglichen Podcast-Highlights/)
 })
+
+test('website articles link to the article instead of "listen" and get article wording when sent immediately', () => {
+  const article = { ...item('Stadtblog', 'Das neue Wärmenetz'), audioUrl: 'https://blog.example.com/artikel', sourceType: 'website' }
+  const html = generateEmailHTML('m@x.de', [article], 'https://s', 'de', 'immediate')
+  assert.match(html, /Artikel lesen/)
+  assert.doesNotMatch(html, /Episode anhören/)
+  assert.match(html, /<title>Neuer Artikel: Stadtblog<\/title>/)
+  assert.match(html, /gerade ist ein neuer Artikel von „Stadtblog“ erschienen/)
+
+  const text = generateEmailPlainText([article], 'https://s', 'en', 'immediate')
+  assert.match(text, /→ Read article: https:\/\/blog\.example\.com\/artikel/)
+  assert.ok(text.startsWith('New article: Stadtblog\n'))
+
+  // Mixed digest: each item keeps its own link text.
+  const mixed = generateEmailPlainText([ONE[0], article], 'https://s', 'de', 'daily')
+  assert.match(mixed, /→ Episode anhören: https:\/\/cdn\.example\/a\.mp3/)
+  assert.match(mixed, /→ Artikel lesen: https:\/\/blog\.example\.com\/artikel/)
+})
