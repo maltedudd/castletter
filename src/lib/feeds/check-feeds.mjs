@@ -106,6 +106,7 @@ async function checkSubscription({ supabase, fetchImpl, parseXml, subscription, 
       status: 'success',
       episodes_found: newEpisodes.length,
     })
+    await persistCheckResult({ supabase, subscription, now })
 
     return { newEpisodes: newEpisodes.length }
   } catch (err) {
@@ -116,6 +117,7 @@ async function checkSubscription({ supabase, fetchImpl, parseXml, subscription, 
       status: 'error',
       error_message: errorMessage,
     })
+    await persistCheckResult({ supabase, subscription, now, error: errorMessage })
 
     return { newEpisodes: 0, error: errorMessage }
   }
@@ -125,7 +127,7 @@ async function checkSubscription({ supabase, fetchImpl, parseXml, subscription, 
  * YouTube channel: reads the official channel-wide Atom feed (always built from the stored
  * channel ID) and imports each upload at most once, keyed by `yt:video:<videoId>` on the
  * existing (subscription_id, guid) unique constraint. The result of every check is also
- * persisted on the source itself, so the admin UI can show an actionable error state.
+ * persisted on the source itself (as for podcast feeds), so the UI can show an actionable error state.
  */
 async function checkYouTubeChannel({ supabase, fetchImpl, subscription, now, youtubeFallback }) {
   let result
@@ -181,16 +183,21 @@ async function checkYouTubeChannel({ supabase, fetchImpl, subscription, now, you
       ? { subscription_id: subscription.id, status: 'error', error_message: result.error, episodes_found: result.newEpisodes }
       : { subscription_id: subscription.id, status: 'success', episodes_found: result.newEpisodes, ...(result.note ? { error_message: result.note } : {}) }
   )
+  await persistCheckResult({ supabase, subscription, now, error: result.error })
+
+  return result
+}
+
+/** Stores the latest check result on the source itself, so the sources UI can show it. */
+async function persistCheckResult({ supabase, subscription, now, error }) {
   await supabase
     .from('podcast_subscriptions')
     .update({
       last_checked_at: now.toISOString(),
-      last_check_status: result.error ? 'error' : 'success',
-      last_check_error: result.error ?? null,
+      last_check_status: error ? 'error' : 'success',
+      last_check_error: error ?? null,
     })
     .eq('id', subscription.id)
-
-  return result
 }
 
 /** Reads the official channel feed; throws with `noFallback` when retrying elsewhere is pointless. */

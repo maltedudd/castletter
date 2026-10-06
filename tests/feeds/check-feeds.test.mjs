@@ -180,3 +180,30 @@ test('episodes inserted concurrently by another run are skipped, not an error', 
   assert.equal(summary.errors, 0)
   assert.equal(db.data.episodes.filter((e) => e.guid === 'dup').length, 1)
 })
+
+test('podcast feeds persist the result of every check on the source like YouTube channels', async () => {
+  const db = makeFakeSupabase({
+    podcast_subscriptions: [
+      { ...SUBSCRIPTION, last_check_status: 'error', last_check_error: 'alter Fehler' },
+      { id: 'sub-2', feed_url: 'https://feeds.example/broken.xml', title: 'Kaputt', created_at: daysAgo(60).toISOString() },
+    ],
+    episodes: [],
+    feed_check_logs: [],
+  })
+  const deps = makeDeps(db, {
+    'https://feeds.example/lage.xml': { items: [item('new-1', 1)] },
+    'https://feeds.example/broken.xml': new Error('Non-whitespace before first tag.'),
+  })
+
+  await checkAllFeeds({ ...deps, now: () => NOW })
+
+  const sources = Object.fromEntries(db.data.podcast_subscriptions.map((s) => [s.id, s]))
+  assert.deepEqual(
+    [sources['sub-1'].last_checked_at, sources['sub-1'].last_check_status, sources['sub-1'].last_check_error],
+    [NOW.toISOString(), 'success', null]
+  )
+  assert.deepEqual(
+    [sources['sub-2'].last_checked_at, sources['sub-2'].last_check_status, sources['sub-2'].last_check_error],
+    [NOW.toISOString(), 'error', 'Non-whitespace before first tag.']
+  )
+})
