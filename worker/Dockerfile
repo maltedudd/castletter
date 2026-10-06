@@ -33,6 +33,8 @@ COPY src/lib/newsletter/*.mjs /app/src/lib/newsletter/
 COPY src/lib/email/*.mjs /app/src/lib/email/
 COPY src/lib/feeds/*.mjs /app/src/lib/feeds/
 COPY src/lib/youtube/*.mjs /app/src/lib/youtube/
+COPY src/lib/websites/*.mjs /app/src/lib/websites/
+COPY src/lib/net/*.mjs /app/src/lib/net/
 COPY worker/*.mjs ./
 
 USER node

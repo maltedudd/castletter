@@ -1,6 +1,7 @@
 // Feed check shared by the Vercel cron route and the Docker worker: reads every enabled
-// source — podcast RSS feeds and YouTube channel Atom feeds — and stores new episodes/videos
-// as `pending_transcription`, the common entry point of the transcription/newsletter pipeline.
+// source — podcast RSS feeds, YouTube channel Atom feeds and website RSS/Atom feeds — and
+// stores new episodes/videos/articles as `pending_transcription`, the common entry point of the
+// transcription/newsletter pipeline (website articles get their text there, without audio).
 // Fetch, XML parser and Supabase client are injected so the rules run under node:test.
 
 import crypto from 'node:crypto'
@@ -11,6 +12,7 @@ import {
   parseYouTubeFeed,
   YOUTUBE_REQUEST_HEADERS,
 } from '../youtube/channel.mjs'
+import { getItemLink, getItemText } from '../websites/feed.mjs'
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 export const MAX_NEW_EPISODES_PER_FEED = 50
@@ -49,7 +51,10 @@ export async function checkAllFeeds({ supabase, fetchImpl = fetch, parseXml, now
       chunk.map((subscription) =>
         subscription.source_type === 'youtube'
           ? checkYouTubeChannel({ supabase, fetchImpl, subscription, now: now(), youtubeFallback })
-          : checkSubscription({ supabase, fetchImpl, parseXml, subscription, now: now() })
+          : checkSubscription({
+              supabase, fetchImpl, parseXml, subscription, now: now(),
+              selectItems: subscription.source_type === 'website' ? selectNewWebsiteItems : selectNewEpisodes,
+            })
       )
     )
     results.forEach((result, index) => {
@@ -72,7 +77,8 @@ export async function checkAllFeeds({ supabase, fetchImpl = fetch, parseXml, now
   return summary
 }
 
-async function checkSubscription({ supabase, fetchImpl, parseXml, subscription, now }) {
+/** RSS/Atom feed of a podcast or website; `selectItems` picks the rows to import. */
+async function checkSubscription({ supabase, fetchImpl, parseXml, subscription, now, selectItems }) {
   try {
     // Fetch XML manually to handle malformed feeds
     const response = await fetchImpl(subscription.feed_url, { signal: AbortSignal.timeout(FEED_TIMEOUT_MS) })
@@ -88,7 +94,7 @@ async function checkSubscription({ supabase, fetchImpl, parseXml, subscription, 
       .eq('subscription_id', subscription.id)
     const existingGuids = new Set((existingEpisodes || []).map((e) => e.guid))
 
-    const newEpisodes = selectNewEpisodes({ items: feed.items || [], subscription, existingGuids, now })
+    const newEpisodes = selectItems({ items: feed.items || [], subscription, existingGuids, now })
 
     if (newEpisodes.length > 0) {
       // ignoreDuplicates: an overlapping run (or a GUID repeated inside the feed) must not
@@ -345,6 +351,49 @@ export function selectNewEpisodes({ items, subscription, existingGuids, now }) {
       published_at: new Date(item.pubDate).toISOString(),
       status: 'pending_transcription',
     }))
+}
+
+/**
+ * Picks the website feed items that should become new `pending_transcription` rows. The feed
+ * text and the article link are stored with the row; the worker later decides whether the
+ * feed text is complete or the public article has to be fetched. Duplicates inside the feed
+ * and already imported items are skipped (key: guid › Atom id › link › hash).
+ */
+export function selectNewWebsiteItems({ items, subscription, existingGuids, now }) {
+  const cutoffDate = getImportCutoff(subscription, now)
+  const seen = new Set(existingGuids)
+  const rows = []
+  for (const item of items) {
+    if (rows.length >= MAX_NEW_EPISODES_PER_FEED) break
+    const published = item.isoDate || item.pubDate
+    const publishedAt = published ? new Date(published) : null
+    if (!publishedAt || isNaN(publishedAt.getTime())) continue
+    if (publishedAt < cutoffDate || publishedAt > now) continue
+    const articleUrl = getItemLink(item)
+    const guid = firstNonEmpty(item.guid, item.id, articleUrl) || generateGuid(subscription.feed_url, item.title || '', published)
+    if (seen.has(guid)) continue
+    seen.add(guid)
+    const text = getItemText(item)
+    rows.push({
+      subscription_id: subscription.id,
+      guid,
+      title: (item.title || '').trim() || 'Untitled Article',
+      description: item.contentSnippet ? String(item.contentSnippet).slice(0, 500) : text.slice(0, 500) || null,
+      // audio_url is NOT NULL for every episode row; for articles it holds the article link.
+      audio_url: articleUrl ?? subscription.feed_url,
+      duration_seconds: null,
+      published_at: publishedAt.toISOString(),
+      status: 'pending_transcription',
+      source_type: 'website',
+      article_url: articleUrl,
+      feed_content: text || null,
+    })
+  }
+  return rows
+}
+
+function firstNonEmpty(...values) {
+  return values.find((value) => typeof value === 'string' && value.trim())?.trim() ?? null
 }
 
 /** Generate a GUID from feed URL + title + pubDate when none exists */

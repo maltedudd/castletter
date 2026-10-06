@@ -31,15 +31,15 @@ export interface UserSettingsUpdate {
   updated_at?: string
 }
 
-// PROJ-2: Podcast Subscriptions (Kanban #29: also YouTube channel sources)
+// PROJ-2: Podcast Subscriptions (Kanban #29: also YouTube channel sources, #35: website RSS)
 
-export type SourceType = 'podcast' | 'youtube'
+export type SourceType = 'podcast' | 'youtube' | 'website'
 
 export interface PodcastSubscription {
   id: string
   user_id: string
   source_type: SourceType
-  /** RSS feed for podcasts; for YouTube the channel's Atom feed (built from youtube_channel_id) */
+  /** RSS feed for podcasts, RSS/Atom feed for websites; for YouTube the channel's Atom feed (built from youtube_channel_id) */
   feed_url: string
   youtube_channel_id: string | null
   title: string
@@ -75,6 +75,17 @@ export interface YouTubeChannelMeta {
   feedUrl: string
 }
 
+/** Validated website feed returned by the /api/websites/validate endpoint */
+export interface WebsiteFeedMeta {
+  title: string
+  description: string | null
+  imageUrl: string | null
+  feedUrl: string
+  feedFormat: 'rss' | 'atom'
+  /** full_text = complete articles in the feed; excerpt = articles are loaded from the website */
+  contentMode: 'full_text' | 'excerpt' | 'empty'
+}
+
 /** Parsed podcast metadata returned by the /api/podcasts/validate endpoint */
 export interface PodcastFeedMeta {
   title: string
@@ -106,13 +117,25 @@ export type YouTubeErrorCode =
   | 'stt_failed'
   | 'transcription_failed'
 
+/** Why a website article was not summarised (no complete public text). */
+export type WebsiteErrorCode =
+  | 'paywalled'
+  | 'access_restricted'
+  | 'content_incomplete'
+  | 'article_unavailable'
+  | 'article_fetch_failed'
+
 export interface Episode {
   id: string
   subscription_id: string
   source_type: SourceType
   youtube_video_id: string | null
-  transcript_source: 'captions' | 'audio_stt' | null
-  error_code: YouTubeErrorCode | null
+  transcript_source: 'captions' | 'audio_stt' | 'feed_content' | 'article' | null
+  error_code: YouTubeErrorCode | WebsiteErrorCode | null
+  /** Website only: public article link from the feed */
+  article_url: string | null
+  /** Website only: cleaned text of the feed item */
+  feed_content: string | null
   guid: string
   title: string
   description: string | null

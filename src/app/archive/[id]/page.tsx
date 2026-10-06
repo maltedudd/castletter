@@ -58,6 +58,7 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
       title,
       newsletter_sent_at,
       audio_url,
+      source_type,
       subscription_id,
       podcast_subscriptions (
         id,
@@ -184,7 +185,8 @@ export default async function ArchiveDetailPage({ params }: PageProps) {
           <div className="mt-10 pt-8 border-t">
             <Button asChild>
               <a href={episode.audio_url} target="_blank" rel="noopener noreferrer">
-                {t('listenButton')}
+                {t(episode.source_type === 'website' ? 'readArticleButton' : 'listenButton')}
+                <span className="sr-only"> {t('opensInNewTab')}</span>
               </a>
             </Button>
           </div>

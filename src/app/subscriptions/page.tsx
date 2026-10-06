@@ -17,11 +17,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { PodcastSubscription } from '@/types/database'
+import type { PodcastSubscription, SourceType } from '@/types/database'
 import { AddSourceForm } from './AddSourceForm'
 import { SourceList, type SourcePatch } from './SourceList'
 
 // ─── Delete Dialog ───────────────────────────────────────────────────
+
+const DELETE_DESCRIPTION_KEYS: Record<SourceType, string> = {
+  podcast: 'deleteDescriptionPodcast',
+  youtube: 'deleteDescriptionYoutube',
+  website: 'deleteDescriptionWebsite',
+}
 
 function DeleteSourceDialog({
   source,
@@ -42,7 +48,7 @@ function DeleteSourceDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>{t('deleteTitle')}</AlertDialogTitle>
           <AlertDialogDescription>
-            {t(source?.source_type === 'youtube' ? 'deleteDescriptionYoutube' : 'deleteDescriptionPodcast', { title: source?.title ?? '' })}
+            {t(DELETE_DESCRIPTION_KEYS[source?.source_type ?? 'podcast'] ?? 'deleteDescriptionPodcast', { title: source?.title ?? '' })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -61,7 +67,7 @@ function DeleteSourceDialog({
 
 // ─── Sources Page ────────────────────────────────────────────────────
 
-/** Podcasts and YouTube channels as sources; stored in podcast_subscriptions (table name kept). */
+/** Podcasts, YouTube channels and websites as sources; stored in podcast_subscriptions (table name kept). */
 export default function SubscriptionsPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Pencil, Podcast, Trash2, Youtube } from 'lucide-react'
+import { Globe, Pencil, Podcast, Trash2, Youtube } from 'lucide-react'
 import { useTranslations, useLocale } from 'next-intl'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -12,14 +12,15 @@ import { Switch } from '@/components/ui/switch'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import type { Episode, PodcastSubscription } from '@/types/database'
+import type { Episode, PodcastSubscription, SourceType } from '@/types/database'
 import { SourceImage } from './SourceImage'
 
 type FailedEpisode = Pick<Episode, 'id' | 'subscription_id' | 'title' | 'status' | 'error_code' | 'error_message' | 'published_at'>
 
 export type SourcePatch = Partial<Pick<PodcastSubscription, 'title' | 'enabled' | 'delivery_mode'>>
 
-// error_code is only written for YouTube videos; podcast failures fall back to the generic text.
+// error_code is written for YouTube videos and website articles; podcast failures fall back to
+// the generic text.
 const ERROR_CODE_KEYS: Record<string, string> = {
   video_unavailable: 'youtubeErrorVideoUnavailable',
   video_not_yet_available: 'youtubeErrorNotYetAvailable',
@@ -28,17 +29,31 @@ const ERROR_CODE_KEYS: Record<string, string> = {
   youtube_tool_missing: 'youtubeErrorToolMissing',
   audio_download_failed: 'youtubeErrorAudioDownload',
   stt_failed: 'youtubeErrorStt',
+  paywalled: 'websiteErrorPaywalled',
+  access_restricted: 'websiteErrorAccessRestricted',
+  content_incomplete: 'websiteErrorContentIncomplete',
+  article_unavailable: 'websiteErrorArticleUnavailable',
+  article_fetch_failed: 'websiteErrorArticleFetchFailed',
+}
+
+const TYPE_BADGES: Record<SourceType, { icon: typeof Podcast; label: string; failedTitle: string; failedUnknown: string }> = {
+  podcast: { icon: Podcast, label: 'typeBadgePodcast', failedTitle: 'failedEpisodesTitle', failedUnknown: 'failedUnknown' },
+  youtube: { icon: Youtube, label: 'typeBadgeYoutube', failedTitle: 'failedVideosTitle', failedUnknown: 'failedUnknown' },
+  website: { icon: Globe, label: 'typeBadgeWebsite', failedTitle: 'failedArticlesTitle', failedUnknown: 'failedArticleUnknown' },
+}
+
+function typeInfo(source: PodcastSubscription) {
+  return TYPE_BADGES[source.source_type] ?? TYPE_BADGES.podcast
 }
 
 function SourceTypeBadge({ source }: { source: PodcastSubscription }) {
   const t = useTranslations('subscriptions')
-  const isYouTube = source.source_type === 'youtube'
-  const Icon = isYouTube ? Youtube : Podcast
+  const { icon: Icon, label } = typeInfo(source)
   return (
     <Badge variant="outline" className="gap-1 font-normal">
       <Icon className="h-3.5 w-3.5" aria-hidden="true" />
       <span className="sr-only">{t('sourceTypeLabel')} </span>
-      {t(isYouTube ? 'typeBadgeYoutube' : 'typeBadgePodcast')}
+      {t(label)}
     </Badge>
   )
 }
@@ -194,14 +209,14 @@ function SourceCard({
 
       {failedEpisodes.length > 0 && (
         <div className="rounded-md border border-destructive/30 p-3 space-y-2">
-          <p className="text-sm font-medium">{t(isYouTube ? 'failedVideosTitle' : 'failedEpisodesTitle')}</p>
+          <p className="text-sm font-medium">{t(typeInfo(source).failedTitle)}</p>
           <ul className="space-y-1">
             {failedEpisodes.map((episode) => (
               <li key={episode.id} className="text-sm">
                 <span className="font-medium">{episode.title}</span>
                 {' – '}
                 <span className="text-muted-foreground">
-                  {episode.error_code && ERROR_CODE_KEYS[episode.error_code] ? t(ERROR_CODE_KEYS[episode.error_code]) : t('failedUnknown')}
+                  {episode.error_code && ERROR_CODE_KEYS[episode.error_code] ? t(ERROR_CODE_KEYS[episode.error_code]) : t(typeInfo(source).failedUnknown)}
                 </span>
                 {episode.error_message && (
                   <span className="block text-xs text-muted-foreground break-words">{episode.error_message}</span>
@@ -217,7 +232,7 @@ function SourceCard({
 
 // ─── Source List ─────────────────────────────────────────────────────
 
-/** All sources of the user (podcasts and YouTube channels) with the same actions. */
+/** All sources of the user (podcasts, YouTube channels, websites) with the same actions. */
 export function SourceList({
   sources,
   onUpdate,
@@ -232,7 +247,7 @@ export function SourceList({
   const [failedEpisodes, setFailedEpisodes] = useState<FailedEpisode[]>([])
   const sourceIds = sources.map((s) => s.id).join(',')
 
-  // Failed episodes/videos are shown per source; reloaded whenever the set of sources changes.
+  // Failed episodes/videos/articles are shown per source; reloaded whenever the set of sources changes.
   useEffect(() => {
     if (!sourceIds) return
     let cancelled = false

@@ -9,3 +9,5 @@
 !src/lib/email/*.mjs
 !src/lib/feeds/*.mjs
 !src/lib/youtube/*.mjs
+!src/lib/websites/*.mjs
+!src/lib/net/*.mjs

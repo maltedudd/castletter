@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     const { data: episodes, error: fetchError } = await supabase
       .from('episodes')
       .select(`
-        id, title, transcript, audio_url, subscription_id,
+        id, title, transcript, audio_url, subscription_id, source_type,
         podcast_subscriptions!inner(title, user_id)
       `)
       .eq('status', 'transcribed')

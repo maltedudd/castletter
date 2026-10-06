@@ -11,7 +11,7 @@ export const DEFAULT_DELIVERY_MODE = 'daily'
 export const SENDING_LEASE_MS = 15 * 60 * 1000
 
 const NEWSLETTER_COLUMNS =
-  'id, title, audio_url, subscription_id, published_at, ' +
+  'id, title, audio_url, subscription_id, published_at, source_type, ' +
   'episode_newsletters!inner(intro, bullet_points, key_takeaways, action_items, quotes, speakers, reflection)'
 
 export function normalizeDeliveryMode(mode) {
@@ -95,6 +95,7 @@ function toNewsletterItem(episode, podcastTitle) {
     speakers: newsletter?.speakers || [],
     reflection: newsletter?.reflection || null,
     audioUrl: episode.audio_url,
+    sourceType: episode.source_type ?? 'podcast',
   }
 }
 

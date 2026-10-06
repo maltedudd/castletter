@@ -2,7 +2,7 @@
 
 import { useId, useReducer, useState } from 'react'
 import { useTranslations } from 'next-intl'
-import { Podcast, Youtube } from 'lucide-react'
+import { Globe, Podcast, Youtube } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -56,7 +56,30 @@ const TYPE_FIELDS: Record<SourceType, {
     checkButton: 'youtubeResolveButton',
     addButton: 'youtubeAddButton',
   },
+  website: {
+    icon: Globe,
+    optionLabel: 'sourceTypeWebsiteLabel',
+    optionHint: 'sourceTypeWebsiteHint',
+    inputDescription: 'websiteInputDescription',
+    inputLabel: 'websiteInputLabel',
+    inputPlaceholder: 'websiteInputPlaceholder',
+    inputType: 'text',
+    checkButton: 'validateButton',
+    addButton: 'websiteAddButton',
+  },
 }
+
+const SUGGEST_TYPE_BUTTON: Record<SourceType, string> = {
+  podcast: 'suggestPodcastButton',
+  youtube: 'suggestYoutubeButton',
+  website: 'suggestWebsiteButton',
+}
+
+const CONTENT_MODE_KEYS = {
+  full_text: 'websiteContentModeFullText',
+  excerpt: 'websiteContentModeExcerpt',
+  empty: 'websiteContentModeEmpty',
+} as const
 
 /** Single entry point for new sources: choose the type, then only that type's fields. */
 export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) => void }) {
@@ -68,11 +91,12 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
   const [state, dispatch] = useReducer(addSourceReducer, initialAddSourceState)
   const [checking, setChecking] = useState(false)
   const [saving, setSaving] = useState(false)
-  const { type, input, preview, error } = state
+  const { type, input, preview, error, suggestedType } = state
   const fields = type ? TYPE_FIELDS[type] : null
   const legendId = `${idPrefix}-type-legend`
   const inputId = `${idPrefix}-input`
   const inputHintId = `${idPrefix}-input-hint`
+  const errorId = `${idPrefix}-error`
 
   async function handleCheck(e: React.FormEvent) {
     e.preventDefault()
@@ -84,7 +108,7 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
     if (result.ok) {
       dispatch({ type: 'setPreview', preview: result.preview })
     } else {
-      dispatch({ type: 'setError', error: result.error ?? t(result.errorKey ?? 'errorUnexpected') })
+      dispatch({ type: 'setError', error: result.error ?? t(result.errorKey ?? 'errorUnexpected'), suggestedType: result.suggestedType ?? null })
     }
   }
 
@@ -116,7 +140,7 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
             value={type ?? ''}
             onValueChange={(value) => dispatch({ type: 'selectType', sourceType: value })}
             disabled={checking || saving}
-            className="grid gap-3 sm:grid-cols-2"
+            className="grid gap-3 sm:grid-cols-3"
           >
             {SOURCE_TYPES.map((sourceType) => {
               const option = TYPE_FIELDS[sourceType]
@@ -164,7 +188,7 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
                 onChange={(e) => dispatch({ type: 'setInput', input: e.target.value })}
                 required
                 disabled={checking || !!preview}
-                aria-describedby={inputHintId}
+                aria-describedby={error ? `${inputHintId} ${errorId}` : inputHintId}
                 aria-invalid={error ? true : undefined}
                 className="h-11 flex-1"
               />
@@ -178,8 +202,24 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
         )}
 
         {error && (
-          <Alert variant="destructive">
-            <AlertDescription>{error}</AlertDescription>
+          <Alert variant="destructive" id={errorId}>
+            <AlertDescription className="space-y-3">
+              <p>{error}</p>
+              {suggestedType && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    dispatch({ type: 'switchType', sourceType: suggestedType })
+                    // The button disappears with the error; continue in the (re-mounted) input.
+                    requestAnimationFrame(() => document.getElementById(inputId)?.focus())
+                  }}
+                >
+                  {t(SUGGEST_TYPE_BUTTON[suggestedType])}
+                </Button>
+              )}
+            </AlertDescription>
           </Alert>
         )}
 
@@ -194,6 +234,14 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
                 )}
                 {preview.description && (
                   <p className="text-sm text-muted-foreground line-clamp-3">{preview.description}</p>
+                )}
+                {preview.type === 'website' && preview.feedFormat && preview.contentMode && (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                    <dt className="text-muted-foreground">{t('websiteFeedFormatLabel')}</dt>
+                    <dd>{preview.feedFormat === 'atom' ? 'Atom' : 'RSS'}</dd>
+                    <dt className="text-muted-foreground">{t('websiteContentModeLabel')}</dt>
+                    <dd>{t(CONTENT_MODE_KEYS[preview.contentMode])}</dd>
+                  </dl>
                 )}
               </div>
             </div>
