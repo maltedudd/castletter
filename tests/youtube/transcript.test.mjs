@@ -176,6 +176,20 @@ test('a lease-loss thrown by the progress callback propagates unchanged (no wrap
   )
 })
 
+test('a lease-loss thrown by onProgress inside the STT step propagates unchanged', async () => {
+  const leaseLost = new Error('lease lost')
+  const youtube = fakeYouTube({ metadata: { ...META, subtitles: {} } })
+  await assert.rejects(
+    transcribeYouTubeVideo({
+      videoId: VIDEO_ID,
+      youtube,
+      transcribeAudio: async ({ onProgress }) => { await onProgress({ stage: 'transcode' }); return 'never' },
+      onProgress: async ({ stage }) => { if (stage === 'transcode') throw leaseLost },
+    }),
+    (err) => err === leaseLost
+  )
+})
+
 test('onProgress runs between download stages and a failure there aborts before the next stage', async () => {
   const stages = []
   const youtube = fakeYouTube({ metadata: { ...META, subtitles: {} } })

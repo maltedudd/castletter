@@ -5,7 +5,10 @@ export const DEFAULTS = {
   pollIntervalSeconds: 60,
   maxEpisodeAgeDays: 7,
   maxAttempts: 3,
-  downloadTimeoutSeconds: 120,
+  // Whole-file download since Kanban #30 (was 120 s per 20 MB range request).
+  downloadTimeoutSeconds: 600,
+  transcodeTimeoutSeconds: 600,
+  ffmpegPath: 'ffmpeg',
   heartbeatFile: '/tmp/castletter-worker-heartbeat',
   fromEmail: 'castletter.io <newsletter@castletter.io>',
   feedCheckIntervalMinutes: 30,
@@ -14,9 +17,9 @@ export const DEFAULTS = {
   youtubeCaptionLanguages: ['de', 'en'],
 }
 
-// Each yt-dlp stage must finish well inside the transcription lease, which is only renewed
-// between stages and chunks.
-const MAX_YOUTUBE_TIMEOUT_SECONDS = Math.floor(TRANSCRIBING_LEASE_MS / 1000) - 60
+// Each download/conversion stage must finish well inside the transcription lease, which is
+// only renewed between stages and chunks.
+const MAX_STAGE_TIMEOUT_SECONDS = Math.floor(TRANSCRIBING_LEASE_MS / 1000) - 60
 
 /**
  * Reads the worker configuration from the environment. Throws with the names (never the
@@ -50,7 +53,9 @@ export function loadWorkerConfig(env = process.env) {
     pollIntervalMs: positiveInt(env, 'TRANSCRIPTION_POLL_INTERVAL_SECONDS', DEFAULTS.pollIntervalSeconds) * 1000,
     maxEpisodeAgeDays: positiveInt(env, 'TRANSCRIPTION_MAX_EPISODE_AGE_DAYS', DEFAULTS.maxEpisodeAgeDays),
     maxAttempts: positiveInt(env, 'TRANSCRIPTION_MAX_ATTEMPTS', DEFAULTS.maxAttempts),
-    downloadTimeoutMs: positiveInt(env, 'TRANSCRIPTION_DOWNLOAD_TIMEOUT_SECONDS', DEFAULTS.downloadTimeoutSeconds) * 1000,
+    downloadTimeoutMs: stageTimeoutSeconds(env, 'TRANSCRIPTION_DOWNLOAD_TIMEOUT_SECONDS', DEFAULTS.downloadTimeoutSeconds) * 1000,
+    transcodeTimeoutMs: stageTimeoutSeconds(env, 'TRANSCRIPTION_TRANSCODE_TIMEOUT_SECONDS', DEFAULTS.transcodeTimeoutSeconds) * 1000,
+    ffmpegPath: env.FFMPEG_PATH || DEFAULTS.ffmpegPath,
     heartbeatFile: env.TRANSCRIPTION_HEARTBEAT_FILE || DEFAULTS.heartbeatFile,
     heartbeatUrl: env.TRANSCRIPTION_HEARTBEAT_URL || null,
     // Feed check (replaces the check-new-episodes cron) is opt-in as well.
@@ -59,7 +64,7 @@ export function loadWorkerConfig(env = process.env) {
       : null,
     youtube: {
       ytDlpPath: env.YTDLP_PATH || DEFAULTS.ytDlpPath,
-      downloadTimeoutMs: youtubeTimeoutSeconds(env) * 1000,
+      downloadTimeoutMs: stageTimeoutSeconds(env, 'YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS', DEFAULTS.youtubeDownloadTimeoutSeconds) * 1000,
       captionLanguages: parseLanguages(env.YOUTUBE_CAPTION_LANGUAGES) ?? DEFAULTS.youtubeCaptionLanguages,
     },
     newsletters: newslettersEnabled
@@ -72,10 +77,10 @@ export function loadWorkerConfig(env = process.env) {
   }
 }
 
-function youtubeTimeoutSeconds(env) {
-  const seconds = positiveInt(env, 'YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS', DEFAULTS.youtubeDownloadTimeoutSeconds)
-  if (seconds > MAX_YOUTUBE_TIMEOUT_SECONDS) {
-    throw new Error(`YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS darf höchstens ${MAX_YOUTUBE_TIMEOUT_SECONDS} sein (Transkriptions-Lease), ist: ${seconds}`)
+function stageTimeoutSeconds(env, name, fallback) {
+  const seconds = positiveInt(env, name, fallback)
+  if (seconds > MAX_STAGE_TIMEOUT_SECONDS) {
+    throw new Error(`${name} darf höchstens ${MAX_STAGE_TIMEOUT_SECONDS} sein (Transkriptions-Lease), ist: ${seconds}`)
   }
   return seconds
 }

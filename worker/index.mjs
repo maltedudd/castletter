@@ -14,6 +14,7 @@ import { runGenerationOnce, runSendSweep, createHourlyGate } from './newsletter-
 import { runFeedCheck, createIntervalGate } from './feed-jobs.mjs'
 import { generateEmailHTML, generateEmailPlainText } from '../src/lib/email/template.mjs'
 import { createOpenRouterChunkTranscriber } from '../src/lib/transcription/audio-transcriber.mjs'
+import { createFfmpeg } from '../src/lib/transcription/audio-file.mjs'
 import { createYtDlpClient } from '../src/lib/youtube/yt-dlp.mjs'
 import { createEpisodeTranscriber } from './transcribers.mjs'
 
@@ -63,6 +64,7 @@ async function main() {
     config,
     transcribeChunk,
     youtube: createYtDlpClient({ binary: config.youtube.ytDlpPath, timeoutMs: config.youtube.downloadTimeoutMs }),
+    ffmpeg: createFfmpeg({ binary: config.ffmpegPath, timeoutMs: config.transcodeTimeoutMs }),
   })
 
   const deps = {
@@ -120,6 +122,8 @@ async function main() {
     feedCheckIntervalMinutes: config.feedCheckIntervalMs ? config.feedCheckIntervalMs / 60_000 : null,
     newsletters: Boolean(config.newsletters),
     newsletterModel: config.newsletters ? config.openrouter.newsletterModel : undefined,
+    downloadTimeoutSeconds: config.downloadTimeoutMs / 1000,
+    transcodeTimeoutSeconds: config.transcodeTimeoutMs / 1000,
     youtubeDownloadTimeoutSeconds: config.youtube.downloadTimeoutMs / 1000,
     youtubeCaptionLanguages: config.youtube.captionLanguages,
   })

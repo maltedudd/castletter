@@ -15,7 +15,9 @@ test('applies defaults when only the required secrets are set', () => {
   assert.equal(config.pollIntervalMs, DEFAULTS.pollIntervalSeconds * 1000)
   assert.equal(config.maxEpisodeAgeDays, 7)
   assert.equal(config.maxAttempts, 3)
-  assert.equal(config.downloadTimeoutMs, 120_000)
+  assert.equal(config.downloadTimeoutMs, 600_000)
+  assert.equal(config.transcodeTimeoutMs, 600_000)
+  assert.equal(config.ffmpegPath, 'ffmpeg')
   assert.equal(config.heartbeatUrl, null)
   assert.equal(config.openrouter.transcriptionModel, 'openai/whisper-large-v3')
 })
@@ -108,4 +110,16 @@ test('YouTube transcription defaults and overrides', () => {
 
 test('YouTube download timeout must stay inside the transcription lease', () => {
   assert.throws(() => loadWorkerConfig({ ...REQUIRED, YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS: '900' }), /höchstens 840/)
+})
+
+test('download and transcode timeouts are configurable but must stay inside the lease', () => {
+  const config = loadWorkerConfig({
+    ...REQUIRED,
+    TRANSCRIPTION_DOWNLOAD_TIMEOUT_SECONDS: '300',
+    TRANSCRIPTION_TRANSCODE_TIMEOUT_SECONDS: '200',
+    FFMPEG_PATH: '/usr/local/bin/ffmpeg',
+  })
+  assert.deepEqual([config.downloadTimeoutMs, config.transcodeTimeoutMs, config.ffmpegPath], [300_000, 200_000, '/usr/local/bin/ffmpeg'])
+  assert.throws(() => loadWorkerConfig({ ...REQUIRED, TRANSCRIPTION_DOWNLOAD_TIMEOUT_SECONDS: '900' }), /TRANSCRIPTION_DOWNLOAD_TIMEOUT_SECONDS darf höchstens 840/)
+  assert.throws(() => loadWorkerConfig({ ...REQUIRED, TRANSCRIPTION_TRANSCODE_TIMEOUT_SECONDS: '841' }), /TRANSCRIPTION_TRANSCODE_TIMEOUT_SECONDS/)
 })

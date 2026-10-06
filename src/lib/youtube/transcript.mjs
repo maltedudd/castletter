@@ -52,8 +52,8 @@ const MAX_TRAILING_GAP_RATIO = 0.05
  * `{ transcript, source: 'audio_stt', captionsReason }` (why captions were not used).
  *
  * `youtube`: `{ fetchMetadata(videoId), downloadCaptions(videoId, track), downloadAudio(videoId) }`
- * (metadata in yt-dlp's JSON shape; audio as `{ audioBuffer, contentType, ext }`).
- * `transcribeAudio({ audioBuffer, contentType, ext, onChunkTranscribed })` is the STT path.
+ * (metadata in yt-dlp's JSON shape; the audio object is passed through unchanged).
+ * `transcribeAudio({ ...audio, onChunkTranscribed, onProgress })` is the STT path.
  * `onChunkTranscribed` and `onProgress` (called between the download stages so the worker
  * can renew its lease) may throw, e.g. on a lost lease; those errors propagate unchanged.
  */
@@ -82,18 +82,21 @@ export async function transcribeYouTubeVideo({
   }
   await onProgress({ stage: 'audio' })
 
+  // Errors of our callbacks (lost lease) must not be relabelled as STT failures.
   let callbackError = null
+  const tracked = (fn) => async (info) => {
+    try {
+      await fn(info)
+    } catch (err) {
+      callbackError = err
+      throw err
+    }
+  }
   try {
     const transcript = await transcribeAudio({
       ...audio,
-      onChunkTranscribed: async (info) => {
-        try {
-          await onChunkTranscribed(info)
-        } catch (err) {
-          callbackError = err
-          throw err
-        }
-      },
+      onChunkTranscribed: tracked(onChunkTranscribed),
+      onProgress: tracked(onProgress),
     })
     return { transcript, source: 'audio_stt', captionsReason: captions.reason }
   } catch (err) {

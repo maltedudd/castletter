@@ -1,6 +1,7 @@
-// yt-dlp adapter for the worker: video metadata, caption download and full audio extraction
-// (MP3, mono, so the existing byte-range chunking stays valid). `execFileImpl` is injected so
-// argument building and error classification are tested without the binary or network.
+// yt-dlp adapter for the worker: video metadata, caption download and the complete original
+// audio track (converted for transcription afterwards by transcription/audio-file.mjs).
+// `execFileImpl` is injected so argument building and error classification are tested
+// without the binary or network.
 //
 // Every call is bounded by `timeoutMs`; a timeout is an error, never a partial result.
 
@@ -15,7 +16,6 @@ import { YOUTUBE_ERROR_CODES, YouTubePermanentError, YouTubeTemporaryError } fro
 const execFileAsync = promisify(execFile)
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 const BASE_ARGS = ['--no-playlist', '--no-progress', '--no-warnings']
-export const AUDIO_BITRATE = '64K'
 
 const PERMANENT_PATTERNS = [
   /private video|video is private/i,
@@ -83,23 +83,19 @@ export function createYtDlpClient({
       })
     },
 
-    async downloadAudio(videoId) {
-      return withTempDir(async (dir) => {
-        await run([
-          '-f', 'bestaudio/best',
-          '--extract-audio',
-          '--audio-format', 'mp3',
-          '--audio-quality', AUDIO_BITRATE,
-          '--postprocessor-args', 'ExtractAudio:-ac 1',
-          '-o', path.join(dir, 'audio.%(ext)s'),
-          buildYouTubeWatchUrl(videoId),
-        ], YOUTUBE_ERROR_CODES.audioDownloadFailed)
-        const file = (await readdir(dir)).find((name) => name.endsWith('.mp3'))
-        if (!file) {
-          throw new YouTubeTemporaryError(YOUTUBE_ERROR_CODES.audioDownloadFailed, 'yt-dlp hat keine MP3-Datei erzeugt (ffmpeg installiert?)')
-        }
-        return { audioBuffer: await readFile(path.join(dir, file)), contentType: 'audio/mpeg', ext: 'mp3' }
-      })
+    /** Downloads the complete best audio track into `dir`; returns `{ path }`. */
+    async downloadAudio(videoId, { dir }) {
+      if (!dir) throw new Error('downloadAudio braucht ein Arbeitsverzeichnis')
+      await run([
+        '-f', 'bestaudio/best',
+        '-o', path.join(dir, 'source.%(ext)s'),
+        buildYouTubeWatchUrl(videoId),
+      ], YOUTUBE_ERROR_CODES.audioDownloadFailed)
+      const file = (await readdir(dir)).find((name) => name.startsWith('source.') && !name.endsWith('.part'))
+      if (!file) {
+        throw new YouTubeTemporaryError(YOUTUBE_ERROR_CODES.audioDownloadFailed, 'yt-dlp hat keine Audiodatei erzeugt')
+      }
+      return { path: path.join(dir, file) }
     },
   }
 }
