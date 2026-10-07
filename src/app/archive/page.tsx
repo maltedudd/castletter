@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useId, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Select,
@@ -25,19 +26,11 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from '@/components/ui/pagination'
-import type { PodcastSubscription } from '@/types/database'
+import { ARCHIVE_PAGE_SIZE, mailIdsOf, toArchiveEntry } from '@/lib/newsletter/archive.mjs'
+import type { NewsletterMailMode, PodcastSubscription } from '@/types/database'
 
-const PAGE_SIZE = 20
-
-interface ArchiveEntry {
-  id: string
-  title: string
-  newsletter_sent_at: string
-  audio_url: string
-  subscription_id: string
-  podcast_title: string
-  podcast_cover_image_url: string | null
-}
+type ArchiveEntry = ReturnType<typeof toArchiveEntry>
+type ModeFilter = 'all' | NewsletterMailMode
 
 function ArchiveEntrySkeleton() {
   return (
@@ -57,27 +50,33 @@ function ArchiveEntrySkeleton() {
   )
 }
 
+/** The mails the user received: each daily digest as one entry, each immediate mail on its own. */
 export default function ArchivePage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const supabase = createClient()
   const t = useTranslations('archive')
   const locale = useLocale()
+  const idPrefix = useId()
 
   const [entries, setEntries] = useState<ArchiveEntry[]>([])
   const [subscriptions, setSubscriptions] = useState<Pick<PodcastSubscription, 'id' | 'title'>[]>([])
   const [loading, setLoading] = useState(true)
   const [totalCount, setTotalCount] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
+  const [filterMode, setFilterMode] = useState<ModeFilter>('all')
   const [filterSubscriptionId, setFilterSubscriptionId] = useState<string>('all')
 
-  const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+  const totalPages = Math.ceil(totalCount / ARCHIVE_PAGE_SIZE)
+  const filtered = filterMode !== 'all' || filterSubscriptionId !== 'all'
 
-  function formatDate(dateString: string) {
-    return new Date(dateString).toLocaleDateString(locale === 'de' ? 'de-DE' : 'en-US', {
+  function formatDateTime(dateString: string) {
+    return new Date(dateString).toLocaleString(locale === 'de' ? 'de-DE' : 'en-US', {
       day: '2-digit',
       month: 'long',
       year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     })
   }
 
@@ -85,69 +84,62 @@ export default function ArchivePage() {
     if (!user) return
     setLoading(true)
 
-    // Load subscriptions for filter dropdown (only once needed, but simpler here)
     const { data: subs } = await supabase
       .from('podcast_subscriptions')
-      .select('id, title, cover_image_url, user_id, feed_url, description, delivery_mode, created_at, updated_at')
+      .select('id, title')
       .eq('user_id', user.id)
       .order('title', { ascending: true })
-
     if (subs) setSubscriptions(subs)
 
-    // Build episode query
+    // Source filter: the mails that contain at least one episode of this source.
+    let mailIds: string[] | null = null
+    if (filterSubscriptionId !== 'all') {
+      const { data: sent } = await supabase
+        .from('episodes')
+        .select('newsletter_mail_id')
+        .eq('subscription_id', filterSubscriptionId)
+        .not('newsletter_mail_id', 'is', null)
+      mailIds = mailIdsOf(sent ?? [])
+      if (mailIds.length === 0) {
+        setEntries([])
+        setTotalCount(0)
+        setLoading(false)
+        return
+      }
+    }
+
     let query = supabase
-      .from('episodes')
+      .from('newsletter_mails')
       .select(
         `
         id,
-        title,
-        newsletter_sent_at,
-        audio_url,
-        subscription_id,
-        podcast_subscriptions!inner (
+        mode,
+        subject,
+        episode_count,
+        sent_at,
+        episodes (
           id,
-          title,
-          cover_image_url,
-          user_id
+          published_at,
+          podcast_subscriptions ( title, cover_image_url )
         )
         `,
         { count: 'exact' }
       )
-      .eq('status', 'newsletter_sent')
-      .not('newsletter_sent_at', 'is', null)
-      .eq('podcast_subscriptions.user_id', user.id)
+      .eq('user_id', user.id)
+    if (filterMode !== 'all') query = query.eq('mode', filterMode)
+    if (mailIds) query = query.in('id', mailIds)
 
-    if (filterSubscriptionId !== 'all') {
-      query = query.eq('subscription_id', filterSubscriptionId)
-    }
-
-    const from = (currentPage - 1) * PAGE_SIZE
-    const to = from + PAGE_SIZE - 1
-
+    const from = (currentPage - 1) * ARCHIVE_PAGE_SIZE
     const { data, count, error } = await query
-      .order('newsletter_sent_at', { ascending: false })
-      .range(from, to)
+      .order('sent_at', { ascending: false })
+      .range(from, from + ARCHIVE_PAGE_SIZE - 1)
 
     if (!error && data) {
-      const mapped: ArchiveEntry[] = data.map((row) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const sub = row.podcast_subscriptions as any
-        return {
-          id: row.id,
-          title: row.title,
-          newsletter_sent_at: row.newsletter_sent_at as string,
-          audio_url: row.audio_url,
-          subscription_id: row.subscription_id,
-          podcast_title: sub?.title ?? t('unknownPodcast'),
-          podcast_cover_image_url: sub?.cover_image_url ?? null,
-        }
-      })
-      setEntries(mapped)
+      setEntries(data.map(toArchiveEntry))
       setTotalCount(count ?? 0)
     }
-
     setLoading(false)
-  }, [user, supabase, currentPage, filterSubscriptionId, t])
+  }, [user, supabase, currentPage, filterMode, filterSubscriptionId])
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -161,8 +153,13 @@ export default function ArchivePage() {
     }
   }, [user, loadData])
 
-  // Reset to page 1 when filter changes
-  function handleFilterChange(value: string) {
+  // Back to page 1 whenever a filter changes
+  function handleModeChange(value: string) {
+    setFilterMode(value === 'daily' || value === 'immediate' ? value : 'all')
+    setCurrentPage(1)
+  }
+
+  function handleSourceChange(value: string) {
     setFilterSubscriptionId(value)
     setCurrentPage(1)
   }
@@ -176,6 +173,9 @@ export default function ArchivePage() {
   }
 
   if (!user) return null
+
+  const modeFilterId = `${idPrefix}-mode`
+  const sourceFilterId = `${idPrefix}-source`
 
   return (
     <div className="min-h-screen section-spacing">
@@ -195,31 +195,47 @@ export default function ArchivePage() {
         </div>
 
         {/* Filter Bar */}
-        <div className="flex items-center gap-3 mb-6">
-          <Select value={filterSubscriptionId} onValueChange={handleFilterChange}>
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder={t('filterAllPodcasts')} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('filterAllPodcasts')}</SelectItem>
-              {subscriptions.map((sub) => (
-                <SelectItem key={sub.id} value={sub.id}>
-                  {sub.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex flex-wrap items-end gap-4 mb-6">
+          <div className="space-y-1">
+            <Label htmlFor={modeFilterId} className="text-sm text-muted-foreground font-normal">{t('filterModeLabel')}</Label>
+            <Select value={filterMode} onValueChange={handleModeChange}>
+              <SelectTrigger id={modeFilterId} className="w-56">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('filterAllModes')}</SelectItem>
+                <SelectItem value="daily">{t('modeDaily')}</SelectItem>
+                <SelectItem value="immediate">{t('modeImmediate')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={sourceFilterId} className="text-sm text-muted-foreground font-normal">{t('filterSourceLabel')}</Label>
+            <Select value={filterSubscriptionId} onValueChange={handleSourceChange}>
+              <SelectTrigger id={sourceFilterId} className="w-64">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('filterAllSources')}</SelectItem>
+                {subscriptions.map((sub) => (
+                  <SelectItem key={sub.id} value={sub.id}>
+                    {sub.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
           {!loading && (
-            <span className="text-sm text-muted-foreground">
-              {t(totalCount === 1 ? 'entryCount_one' : 'entryCount_other', { count: totalCount })}
+            <span className="text-sm text-muted-foreground pb-2" aria-live="polite">
+              {t(totalCount === 1 ? 'mailCount_one' : 'mailCount_other', { count: totalCount })}
             </span>
           )}
         </div>
 
         {/* Content */}
         {loading ? (
-          <div className="space-y-3">
+          <div className="space-y-3" aria-busy="true">
             {Array.from({ length: 5 }).map((_, i) => (
               <ArchiveEntrySkeleton key={i} />
             ))}
@@ -228,18 +244,14 @@ export default function ArchivePage() {
           /* Empty State */
           <Card>
             <CardContent className="py-16 text-center">
-              <div className="text-5xl mb-4">📬</div>
+              <div className="text-5xl mb-4" aria-hidden="true">📬</div>
               <p className="text-lg font-semibold mb-2">
-                {filterSubscriptionId !== 'all'
-                  ? t('emptyTitleFiltered')
-                  : t('emptyTitleAll')}
+                {filtered ? t('emptyTitleFiltered') : t('emptyTitleAll')}
               </p>
               <p className="text-muted-foreground text-sm mb-6">
-                {filterSubscriptionId !== 'all'
-                  ? t('emptyHintFiltered')
-                  : t('emptyHintAll')}
+                {filtered ? t('emptyHintFiltered') : t('emptyHintAll')}
               </p>
-              {filterSubscriptionId === 'all' && (
+              {!filtered && (
                 <Button asChild variant="outline">
                   <Link href="/subscriptions">{t('subscribeLink')}</Link>
                 </Button>
@@ -248,48 +260,53 @@ export default function ArchivePage() {
           </Card>
         ) : (
           <>
-            <div className="space-y-3">
+            <ul className="space-y-3">
               {entries.map((entry) => (
-                <Card key={entry.id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-5">
-                    <div className="flex items-center gap-4">
-                      {/* Cover */}
-                      {entry.podcast_cover_image_url ? (
-                        <Image
-                          src={entry.podcast_cover_image_url}
-                          alt={entry.podcast_title}
-                          width={64}
-                          height={64}
-                          className="rounded-lg object-cover shrink-0"
-                        />
-                      ) : (
-                        <div className="w-16 h-16 rounded-lg bg-muted flex items-center justify-center text-2xl shrink-0">
-                          🎙️
+                <li key={entry.id}>
+                  <Card className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-5">
+                      <div className="flex items-center gap-4">
+                        {entry.coverImageUrl ? (
+                          <Image
+                            src={entry.coverImageUrl}
+                            alt=""
+                            width={64}
+                            height={64}
+                            className="rounded-lg object-cover shrink-0"
+                          />
+                        ) : (
+                          <div aria-hidden="true" className="w-16 h-16 rounded-lg bg-muted flex items-center justify-center text-2xl shrink-0">
+                            {entry.mode === 'daily' ? '📰' : '✉️'}
+                          </div>
+                        )}
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant={entry.mode === 'daily' ? 'default' : 'outline'} className="text-xs">
+                              {t(entry.mode === 'daily' ? 'modeDaily' : 'modeImmediate')}
+                            </Badge>
+                            <span className="text-sm text-muted-foreground">
+                              <time dateTime={entry.sentAt}>{formatDateTime(entry.sentAt)}</time>
+                            </span>
+                          </div>
+                          <p className="font-semibold leading-snug line-clamp-2 mt-1">{entry.subject}</p>
+                          <p className="text-sm text-muted-foreground truncate mt-0.5">
+                            {t(entry.itemCount === 1 ? 'itemCount_one' : 'itemCount_other', { count: entry.itemCount })}
+                            {entry.sources.length > 0 && ` · ${entry.sources.join(', ')}`}
+                          </p>
                         </div>
-                      )}
 
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-muted-foreground truncate">
-                          {entry.podcast_title}
-                        </p>
-                        <p className="font-semibold leading-snug line-clamp-2 mt-0.5">
-                          {entry.title}
-                        </p>
-                        <Badge variant="secondary" className="mt-1.5 text-xs">
-                          {formatDate(entry.newsletter_sent_at)}
-                        </Badge>
+                        <Button asChild variant="outline" size="sm" className="shrink-0">
+                          <Link href={`/archive/${entry.id}`} aria-label={t('readMailLabel', { subject: entry.subject })}>
+                            {t('readButton')}
+                          </Link>
+                        </Button>
                       </div>
-
-                      {/* Action */}
-                      <Button asChild variant="outline" size="sm" className="shrink-0">
-                        <Link href={`/archive/${entry.id}`}>{t('readButton')}</Link>
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
+                    </CardContent>
+                  </Card>
+                </li>
               ))}
-            </div>
+            </ul>
 
             {/* Pagination */}
             {totalPages > 1 && (
