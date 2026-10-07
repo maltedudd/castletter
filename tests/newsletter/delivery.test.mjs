@@ -274,3 +274,68 @@ test('deliverImmediatelyIfWanted mails only episodes of immediate podcasts', asy
   assert.deepEqual(mails.map((m) => m.subject), ['Hotel Matze: Episode now'])
   assert.equal(statusOf(db, 'daily'), 'newsletter_ready')
 })
+
+// ─── Archive: one record per sent mail ───────────────────────────────
+
+test('a daily digest is recorded as one mail that holds all its episodes', async () => {
+  const db = makeDb([episode('a'), episode('b', { published_at: '2026-10-03T07:00:00.000Z' })])
+  const { sendEmail } = recordingMailer()
+
+  await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true })
+
+  assert.deepEqual(db.data.newsletter_mails, [{
+    id: 'newsletter_mails-1',
+    user_id: 'user-1',
+    mode: 'daily',
+    subject: 'Deine neuen Podcast-Updates (2 Episoden)',
+    episode_count: 2,
+    sent_at: NOW.toISOString(),
+  }])
+  assert.ok(db.data.episodes.every((e) => e.newsletter_mail_id === 'newsletter_mails-1' && e.status === 'newsletter_sent'))
+})
+
+test('immediate mails are recorded one by one, next to the digest of the same run', async () => {
+  const db = makeDb([
+    episode('daily-1'),
+    episode('now-1', { subscription_id: 'sub-now' }),
+    episode('now-2', { subscription_id: 'sub-now', published_at: '2026-10-03T07:00:00.000Z' }),
+  ])
+  const { sendEmail } = recordingMailer()
+
+  await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true })
+
+  assert.deepEqual(
+    db.data.newsletter_mails.map((m) => [m.mode, m.episode_count, m.subject]),
+    [['immediate', 1, 'Hotel Matze: Episode now-1'], ['immediate', 1, 'Hotel Matze: Episode now-2'], ['daily', 1, 'Deine neuen Podcast-Updates (1 Episode)']]
+  )
+  const mailOf = (id) => db.data.episodes.find((e) => e.id === id).newsletter_mail_id
+  assert.equal(new Set([mailOf('now-1'), mailOf('now-2'), mailOf('daily-1')]).size, 3)
+})
+
+test('a failed archive record never blocks or repeats the send', async () => {
+  const db = makeDb([episode('x', { subscription_id: 'sub-now' })])
+  const originalFrom = db.from.bind(db)
+  db.from = (table) => table === 'newsletter_mails'
+    ? { insert: () => ({ select: async () => ({ data: null, error: { message: 'relation "newsletter_mails" does not exist' } }) }) }
+    : originalFrom(table)
+  const { mails, sendEmail } = recordingMailer()
+
+  const result = await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF })
+  assert.deepEqual(result, { mailsSent: 1, episodesSent: 1, archiveErrors: 1 })
+  assert.equal(statusOf(db, 'x'), 'newsletter_sent')
+  assert.equal(db.data.episodes[0].newsletter_mail_id, undefined)
+
+  const again = await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF })
+  assert.deepEqual(again, { mailsSent: 0, episodesSent: 0 })
+  assert.equal(mails.length, 1)
+})
+
+test('a failed send records no mail', async () => {
+  const db = makeDb([episode('x', { subscription_id: 'sub-now' })])
+  await assert.rejects(sendNewsletterToUser({
+    supabase: db, user: USER, now: NOW, recentCutoff: CUTOFF,
+    sendEmail: async () => { throw new Error('Resend down') },
+  }))
+  assert.equal(db.data.newsletter_mails, undefined)
+  assert.equal(statusOf(db, 'x'), 'newsletter_ready')
+})
