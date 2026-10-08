@@ -198,6 +198,12 @@ Nach der Transkription läuft in jeder Iteration zusätzlich:
 
 Das Alters-Limit gilt für die ganze Pipeline (statt der 48 h der Vercel-Crons).
 
+**Archiv (Kanban #37):** Jede versendete Mail wird in `newsletter_mails` gespeichert (Art
+`daily`/`immediate`, Betreff, Anzahl Beiträge, Zeitpunkt); ihre Beiträge verweisen über
+`episodes.newsletter_mail_id` darauf. Die App zeigt im Archiv diese Mails statt einzelner
+Beiträge. Schlägt das Speichern fehl, gilt die Mail trotzdem als versendet (kein
+Doppelversand); der Log-Eintrag `send_sweep` zählt das unter `archiveErrors`.
+
 Benötigt zusätzlich `RESEND_API_KEY` und `APP_URL` (für den Einstellungs-Link in der Mail).
 
 ## Voraussetzungen

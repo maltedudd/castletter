@@ -123,8 +123,9 @@ test('send sweep mails the daily digest in the user\'s hour, including episodes 
 
   const summary = await runSendSweep(deps)
 
-  assert.deepEqual(summary, { users: 1, dailyDue: 1, mailsSent: 1, episodesSent: 2, errors: 0, staleSendingReset: 0 })
+  assert.deepEqual(summary, { users: 1, dailyDue: 1, mailsSent: 1, episodesSent: 2, errors: 0, archiveErrors: 0, staleSendingReset: 0 })
   assert.equal(deps.mails[0].subject, 'Deine neuen Podcast-Updates (2 Episoden)')
+  assert.deepEqual(db.data.newsletter_mails.map((m) => [m.mode, m.episode_count]), [['daily', 2]])
 })
 
 test('send sweep keeps daily podcasts for later outside the delivery hour', async () => {

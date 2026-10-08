@@ -93,7 +93,7 @@ export async function runSendSweep(deps) {
     .select('user_id, newsletter_email, newsletter_delivery_hour')
   if (error) throw new Error(`Einstellungen konnten nicht gelesen werden: ${error.message}`)
 
-  const summary = { users: 0, dailyDue: 0, mailsSent: 0, episodesSent: 0, errors: 0, staleSendingReset }
+  const summary = { users: 0, dailyDue: 0, mailsSent: 0, episodesSent: 0, errors: 0, archiveErrors: 0, staleSendingReset }
   for (const user of users ?? []) {
     const includeDaily = isDailyDigestDue(user, currentHourUTC)
     summary.users++
@@ -104,6 +104,7 @@ export async function runSendSweep(deps) {
       })
       summary.mailsSent += result.mailsSent
       summary.episodesSent += result.episodesSent
+      summary.archiveErrors += result.archiveErrors ?? 0
     } catch (err) {
       summary.errors++
       log('error', 'send_failed', { userId: user.user_id, error: err instanceof Error ? err.message : String(err) })

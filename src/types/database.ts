@@ -136,6 +136,8 @@ export interface Episode {
   article_url: string | null
   /** Website only: cleaned text of the feed item */
   feed_content: string | null
+  /** Mail this episode was sent in (Kanban #37; null before that or while unsent) */
+  newsletter_mail_id: string | null
   guid: string
   title: string
   description: string | null
@@ -155,6 +157,21 @@ export interface FeedCheckLog {
   error_message: string | null
   episodes_found: number
   checked_at: string
+}
+
+// Kanban #37: sent mails (newsletter archive)
+
+export type NewsletterMailMode = 'daily' | 'immediate'
+
+export interface NewsletterMail {
+  id: string
+  user_id: string
+  mode: NewsletterMailMode
+  /** Subject line exactly as sent */
+  subject: string
+  episode_count: number
+  sent_at: string
+  created_at: string
 }
 
 // PROJ-5: Episode Newsletters
