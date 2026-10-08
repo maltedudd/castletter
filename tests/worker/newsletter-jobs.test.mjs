@@ -188,3 +188,24 @@ test('send sweep with mixed podcasts: immediate always, daily digest only in the
   assert.deepEqual(deps.mails.map((m) => m.subject), ['Hotel Matze: Episode now'])
   assert.equal(db.data.episodes.find((e) => e.id === 'daily').status, 'newsletter_ready')
 })
+
+test('send sweep creates the digest overview in the user\'s style and logs a failed overview', async () => {
+  const data = tables({ hour: 7, episodes: [readyEpisode('a', 1), readyEpisode('b', 2)] })
+  data.user_settings[0] = { ...data.user_settings[0], summary_tone: 'warm', summary_prompt_addition: 'Mit Beispielen' }
+  const styles = []
+  const overview = { summary: 'Querschnitt.', themes: [], connections: [], reflection: null, itemCount: 2 }
+  const deps = makeDeps(makeFakeSupabase(data), { summarizeDigest: async (items, style) => { styles.push(style); return overview } })
+
+  await runSendSweep(deps)
+
+  assert.deepEqual(styles, [{ tone: 'warm', promptAddition: 'Mit Beispielen' }])
+  assert.deepEqual(deps.mails[0].overview, overview)
+
+  const failing = makeDeps(makeFakeSupabase(tables({ hour: 7, episodes: [readyEpisode('a', 1), readyEpisode('b', 2)] })), {
+    summarizeDigest: async () => { throw new Error('model down') },
+  })
+  const summary = await runSendSweep(failing)
+  assert.equal(summary.mailsSent, 1)
+  assert.equal(failing.mails[0].overview, null)
+  assert.ok(failing.logs.some((l) => l.msg === 'digest_overview_failed' && l.level === 'warn' && l.error === 'model down'))
+})

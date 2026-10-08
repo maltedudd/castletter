@@ -14,6 +14,7 @@ export interface NewsletterRecipient {
 }
 
 type NewsletterItem = Parameters<typeof generateEmailPlainText>[0][number]
+type DigestOverview = Parameters<typeof generateEmailPlainText>[4]
 
 export function createResendMailer(resend: Resend) {
   const settingsUrl = `${APP_URL}/settings`
@@ -23,18 +24,20 @@ export function createResendMailer(resend: Resend) {
     subject,
     items,
     mode,
+    overview = null,
   }: {
     to: string
     subject: string
     items: NewsletterItem[]
     mode: 'daily' | 'immediate'
+    overview?: DigestOverview
   }) {
     const { error } = await resend.emails.send({
       from: FROM_EMAIL,
       to,
       subject,
-      html: generateEmailHTML(to, items, settingsUrl, 'de', mode),
-      text: generateEmailPlainText(items, settingsUrl, 'de', mode),
+      html: generateEmailHTML(to, items, settingsUrl, 'de', mode, overview),
+      text: generateEmailPlainText(items, settingsUrl, 'de', mode, overview),
     })
     if (error) {
       throw new Error(`Resend error: ${error.message}`)
@@ -42,7 +45,11 @@ export function createResendMailer(resend: Resend) {
   }
 }
 
-/** Sends a user's ready newsletters per podcast delivery mode (see delivery.mjs). */
+/**
+ * Sends a user's ready newsletters per podcast delivery mode (see delivery.mjs). This Vercel
+ * fallback sorts and groups the digest but creates no AI overview: the model call would not
+ * fit its time limit, and the Docker worker (which does create it) handles delivery.
+ */
 export function deliverNewsletters(
   supabase: ReturnType<typeof createAdminClient>,
   resend: Resend,

@@ -15,6 +15,7 @@ import { runOnce, releaseClaim } from './worker-core.mjs'
 import { runGenerationOnce, runSendSweep, createHourlyGate } from './newsletter-jobs.mjs'
 import { runFeedCheck, createIntervalGate } from './feed-jobs.mjs'
 import { generateEmailHTML, generateEmailPlainText } from '../src/lib/email/template.mjs'
+import { createDigestOverviewGenerator } from '../src/lib/newsletter/digest.mjs'
 import { createOpenRouterChunkTranscriber } from '../src/lib/transcription/audio-transcriber.mjs'
 import { createFfmpeg } from '../src/lib/transcription/audio-file.mjs'
 import { createYtDlpClient } from '../src/lib/youtube/yt-dlp.mjs'
@@ -43,13 +44,13 @@ async function pingHeartbeatUrl(config) {
 
 function createMailer({ resendApiKey, fromEmail, settingsUrl }) {
   const resend = new Resend(resendApiKey)
-  return async function sendEmail({ to, subject, items, mode }) {
+  return async function sendEmail({ to, subject, items, mode, overview = null }) {
     const { error } = await resend.emails.send({
       from: fromEmail,
       to,
       subject,
-      html: generateEmailHTML(to, items, settingsUrl, 'de', mode),
-      text: generateEmailPlainText(items, settingsUrl, 'de', mode),
+      html: generateEmailHTML(to, items, settingsUrl, 'de', mode, overview),
+      text: generateEmailPlainText(items, settingsUrl, 'de', mode, overview),
     })
     if (error) throw new Error(`Resend error: ${error.message}`)
   }
@@ -84,6 +85,10 @@ async function main() {
       return (xml) => parser.parseString(xml)
     })(),
     sendEmail: config.newsletters ? createMailer(config.newsletters) : null,
+    // Integrated overview above the single summaries of a daily digest (Kanban #38).
+    summarizeDigest: config.newsletters
+      ? createDigestOverviewGenerator({ openrouter, model: config.openrouter.newsletterModel })
+      : null,
     transcribeEpisodeAudio: (episode, onChunkTranscribed, onProgress) =>
       transcribeEpisode(
         episode,
