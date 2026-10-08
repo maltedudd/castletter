@@ -1,13 +1,14 @@
-// Sources: podcast RSS feeds, YouTube channels and website RSS/Atom feeds are source types of
-// one product. This module holds the type-independent "add source" flow (type selection →
+// Sources: podcast RSS feeds, YouTube channels, website RSS/Atom feeds and social accounts
+// (Mastodon) are source types of one product. This module holds the type-independent "add source" flow (type selection →
 // type-specific input → preview → save) so the UI stays thin and the flow is testable with
 // node:test.
 //
 // The type-specific technical steps stay separate: podcasts are validated by
 // /api/podcasts/validate, channels resolved by /api/youtube/resolve, website feeds validated
-// by /api/websites/validate, and all are stored in the existing podcast_subscriptions table.
+// by /api/websites/validate, Mastodon accounts resolved by /api/social/resolve, and all are
+// stored in the existing podcast_subscriptions table.
 
-/** @typedef {'podcast' | 'youtube' | 'website'} SourceType */
+/** @typedef {'podcast' | 'youtube' | 'website' | 'social'} SourceType */
 
 /**
  * Type-independent preview of a validated source.
@@ -20,6 +21,9 @@
  *   channelId: string | null
  *   feedFormat?: 'rss' | 'atom'
  *   contentMode?: 'full_text' | 'excerpt' | 'empty'
+ *   socialPlatform?: 'mastodon'
+ *   socialHandle?: string
+ *   socialAccountId?: string | null
  * }} SourcePreview
  */
 
@@ -39,7 +43,7 @@
  */
 
 /** @type {readonly SourceType[]} */
-export const SOURCE_TYPES = Object.freeze(['podcast', 'youtube', 'website'])
+export const SOURCE_TYPES = Object.freeze(['podcast', 'youtube', 'website', 'social'])
 
 /** @returns {value is SourceType} */
 export function isSourceType(/** @type {unknown} */ value) {
@@ -125,6 +129,23 @@ const RESOLVERS = {
       contentMode: data.contentMode,
     }),
   },
+  social: {
+    endpoint: '/api/social/resolve',
+    body: (/** @type {string} */ input) => ({ input }),
+    fallbackErrorKey: 'socialErrorFetch',
+    /** @returns {SourcePreview} */
+    toPreview: (/** @type {any} */ data) => ({
+      type: 'social',
+      title: data.title,
+      description: data.description ?? null,
+      imageUrl: data.imageUrl ?? null,
+      feedUrl: data.feedUrl,
+      channelId: null,
+      socialPlatform: data.platform,
+      socialHandle: data.handle,
+      socialAccountId: data.accountId ?? null,
+    }),
+  },
 }
 
 /**
@@ -167,7 +188,8 @@ export async function resolveSourcePreview({ type, input, fetchImpl = fetch }) {
 
 /**
  * Row for podcast_subscriptions; podcast rows stay exactly as before the YouTube sources
- * (source_type defaults to 'podcast' in the database). Website rows only carry the feed URL.
+ * (source_type defaults to 'podcast' in the database). Website rows only carry the feed URL;
+ * social rows add platform, handle and (if the public API answered) the account ID.
  * @param {SourcePreview} preview
  * @param {string} userId
  */
@@ -185,6 +207,15 @@ export function buildSourceInsert(preview, userId) {
   if (preview.type === 'website') {
     return { ...common, source_type: 'website' }
   }
+  if (preview.type === 'social') {
+    return {
+      ...common,
+      source_type: 'social',
+      social_platform: preview.socialPlatform,
+      social_handle: preview.socialHandle,
+      social_account_id: preview.socialAccountId ?? null,
+    }
+  }
   return common
 }
 
@@ -192,6 +223,7 @@ const DUPLICATE_ERROR_KEYS = {
   podcast: 'errorAlreadySubscribed',
   youtube: 'youtubeErrorAlreadyAdded',
   website: 'websiteErrorAlreadyAdded',
+  social: 'socialErrorAlreadyAdded',
 }
 
 /**

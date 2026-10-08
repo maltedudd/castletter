@@ -1,15 +1,19 @@
 // Daily digest (Kanban #38): the integrated overview ("Überblick") above the single summaries,
 // which stay in chronological order. The overview weighs the source types – podcasts first
 // and most, then YouTube, then Website (RSS) – and is built from the stored summaries and
-// their metadata only, never from transcripts, so cost and context stay bounded.
+// their metadata only, never from transcripts, so cost and context stay bounded. Social posts
+// (Kanban #39) are mailed unchanged without a summary, so the overview never includes them.
 // Dependency-free: the OpenRouter client is injected.
 
 import { buildNewsletterCompletionOptions } from '../cron/newsletter-request.mjs'
 import { extractBulletPoints, extractSection, extractSectionRaw } from './generate.mjs'
 import { buildStyleInstructions } from './summary-style.mjs'
 
-/** Overview priority: podcasts first, then YouTube, then Website (RSS); unknown types last. */
-export const SOURCE_TYPE_ORDER = ['podcast', 'youtube', 'website']
+/**
+ * Overview priority: podcasts first, then YouTube, then Website (RSS), then social posts (which
+ * have no summary and are shown in their own digest section); unknown types last.
+ */
+export const SOURCE_TYPE_ORDER = ['podcast', 'youtube', 'website', 'social']
 export const OTHER_SOURCE_TYPE = 'other'
 
 /** A digest needs at least this many summarised items for an overview. */
@@ -88,8 +92,8 @@ function clip(text, maxChars) {
   return chars.length > maxChars ? `${chars.slice(0, maxChars - 1).join('').trimEnd()}…` : clean
 }
 
-const TYPE_LABELS = { podcast: 'Podcast-Episode', youtube: 'YouTube-Video', website: 'Website-Artikel', other: 'Inhalt' }
-const PRIORITY_LABELS = { podcast: 'Priorität 1', youtube: 'Priorität 2', website: 'Priorität 3', other: 'Priorität 3' }
+const TYPE_LABELS = { podcast: 'Podcast-Episode', youtube: 'YouTube-Video', website: 'Website-Artikel', social: 'Social-Beitrag', other: 'Inhalt' }
+const PRIORITY_LABELS = { podcast: 'Priorität 1', youtube: 'Priorität 2', website: 'Priorität 3', social: 'Priorität 4', other: 'Priorität 3' }
 
 function describeItem(item, index) {
   const date = publishedTime(item) === Infinity ? null : new Date(publishedTime(item)).toISOString().slice(0, 10)

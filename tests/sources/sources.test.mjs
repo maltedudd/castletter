@@ -32,8 +32,9 @@ function makeFetch(routes) {
 
 // ─── Source type selection ───────────────────────────────────────────
 
-test('source types are podcast RSS, YouTube channel and website RSS', () => {
-  assert.deepEqual(SOURCE_TYPES, ['podcast', 'youtube', 'website'])
+test('source types are podcast RSS, YouTube channel, website RSS and social (Mastodon)', () => {
+  assert.deepEqual(SOURCE_TYPES, ['podcast', 'youtube', 'website', 'social'])
+  assert.equal(isSourceType('social'), true)
   assert.equal(isSourceType('podcast'), true)
   assert.equal(isSourceType('youtube'), true)
   assert.equal(isSourceType('website'), true)
@@ -326,4 +327,85 @@ test('website RSS: a duplicate feed reports the website-specific message', async
   const supabase = { from: () => ({ insert: async () => ({ error: { code: '23505', message: 'duplicate' } }) }) }
   const preview = { type: 'website', title: 'W', description: null, imageUrl: null, feedUrl: 'https://blog.example.com/feed', channelId: null }
   assert.deepEqual(await saveSource({ supabase, userId: USER_ID, preview }), { ok: false, errorKey: 'websiteErrorAlreadyAdded' })
+})
+
+// ─── Kanban #39: social (Mastodon) ───────────────────────────────────
+
+const SOCIAL_API = {
+  title: 'Anna Beispiel',
+  description: 'Schreibt über Verkehr',
+  imageUrl: 'https://files.social.example/anna.png',
+  feedUrl: 'https://social.example/@anna.rss',
+  handle: 'anna@social.example',
+  accountId: '109000000000000001',
+  platform: 'mastodon',
+}
+
+test('social: resolves the profile, previews the account and stores a Mastodon source', async () => {
+  const { fetchImpl, calls } = makeFetch({ '/api/social/resolve': jsonResponse(SOCIAL_API) })
+  const resolved = await resolveSourcePreview({ type: 'social', input: ' @anna@social.example ', fetchImpl })
+
+  assert.deepEqual(calls, [{ url: '/api/social/resolve', method: 'POST', body: { input: '@anna@social.example' } }])
+  assert.deepEqual(resolved, {
+    ok: true,
+    preview: {
+      type: 'social',
+      title: 'Anna Beispiel',
+      description: 'Schreibt über Verkehr',
+      imageUrl: 'https://files.social.example/anna.png',
+      feedUrl: 'https://social.example/@anna.rss',
+      channelId: null,
+      socialPlatform: 'mastodon',
+      socialHandle: 'anna@social.example',
+      socialAccountId: '109000000000000001',
+    },
+  })
+
+  const supabase = makeFakeSupabase({ podcast_subscriptions: [] })
+  assert.deepEqual(await saveSource({ supabase, userId: USER_ID, preview: resolved.preview }), { ok: true })
+  assert.deepEqual(supabase.data.podcast_subscriptions[0], {
+    id: 'podcast_subscriptions-1',
+    user_id: USER_ID,
+    feed_url: 'https://social.example/@anna.rss',
+    title: 'Anna Beispiel',
+    description: 'Schreibt über Verkehr',
+    cover_image_url: 'https://files.social.example/anna.png',
+    source_type: 'social',
+    social_platform: 'mastodon',
+    social_handle: 'anna@social.example',
+    social_account_id: '109000000000000001',
+  })
+})
+
+test('social: an account resolved only via RSS is stored without account ID', async () => {
+  const { fetchImpl } = makeFetch({ '/api/social/resolve': jsonResponse({ ...SOCIAL_API, accountId: null }) })
+  const resolved = await resolveSourcePreview({ type: 'social', input: 'https://social.example/@anna', fetchImpl })
+  assert.equal(resolved.preview.socialAccountId, null)
+  assert.equal(buildSourceInsert(resolved.preview, USER_ID).social_account_id, null)
+})
+
+test('social: error keys from the API, fallback key and the social-specific duplicate message', async () => {
+  const notFound = makeFetch({ '/api/social/resolve': jsonResponse({ errorKey: 'socialErrorNotFound' }, 404) })
+  assert.deepEqual(
+    await resolveSourcePreview({ type: 'social', input: '@nobody@social.example', fetchImpl: notFound.fetchImpl }),
+    { ok: false, errorKey: 'socialErrorNotFound' }
+  )
+  const broken = makeFetch({ '/api/social/resolve': jsonResponse({}, 500) })
+  assert.deepEqual(
+    await resolveSourcePreview({ type: 'social', input: '@anna@social.example', fetchImpl: broken.fetchImpl }),
+    { ok: false, errorKey: 'socialErrorFetch' }
+  )
+  const supabase = { from: () => ({ insert: async () => ({ error: { code: '23505', message: 'duplicate' } }) }) }
+  const preview = { type: 'social', title: 'A', description: null, imageUrl: null, feedUrl: 'https://social.example/@anna.rss', channelId: null, socialPlatform: 'mastodon', socialHandle: 'anna@social.example', socialAccountId: null }
+  assert.deepEqual(await saveSource({ supabase, userId: USER_ID, preview }), { ok: false, errorKey: 'socialErrorAlreadyAdded' })
+})
+
+test('buildSourceInsert keeps podcast, YouTube and website rows free of social columns', () => {
+  const base = { title: 'T', description: null, imageUrl: null, feedUrl: 'https://x.example/feed', channelId: null }
+  for (const type of ['podcast', 'website']) {
+    const row = buildSourceInsert({ ...base, type }, USER_ID)
+    assert.ok(!('social_platform' in row) && !('social_handle' in row) && !('social_account_id' in row), type)
+  }
+  const yt = buildSourceInsert({ ...base, type: 'youtube', channelId: CHANNEL_ID }, USER_ID)
+  assert.ok(!('social_platform' in yt))
 })
