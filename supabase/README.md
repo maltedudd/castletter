@@ -90,6 +90,19 @@ Websites mit öffentlichem RSS-/Atom-Feed als dritter Quelltyp „Website (RSS)�
   bestehende Podcast- und YouTube-Zeilen bleiben unverändert. Die Migration ist wiederholbar
   und muss **vor** dem Deployment von App und Worker laufen.
 
+### 20261007_create_newsletter_mails.sql (Kanban #37)
+
+Versendete Newsletter-Mails für das Archiv:
+
+- **`newsletter_mails`**: eine Zeile pro versendeter Mail (`mode` `daily` | `immediate`,
+  `subject`, `episode_count`, `sent_at`). RLS: Nutzer lesen nur eigene Mails; geschrieben wird
+  nur vom Worker/Send-Cron mit der Service-Role.
+- **`episodes.newsletter_mail_id`**: Mail, in der der Beitrag verschickt wurde
+  (`ON DELETE SET NULL`).
+- Mails von vor der Migration werden nicht nachgebildet. Die Migration muss **vor** dem
+  Deployment der App laufen (das Archiv liest die neue Tabelle). Der Versand toleriert eine
+  fehlende Tabelle, verschickt also auch vorher weiter.
+
 ## Verifizierung
 
 Nach dem Ausführen der Migration kannst du im Supabase Dashboard prüfen:

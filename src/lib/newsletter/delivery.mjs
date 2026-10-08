@@ -50,10 +50,31 @@ export async function claimEpisodesForSending(supabase, episodeIds, now = new Da
   return (data ?? []).map((row) => row.id)
 }
 
-async function markEpisodesSent(supabase, episodeIds, now) {
+/**
+ * Records one sent mail for the archive. Returns its id, or null when the record could not be
+ * written – the mail is out already, so this must never fail the send.
+ */
+async function recordSentMail(supabase, { userId, mode, subject, episodeCount, now }) {
+  try {
+    const { data, error } = await supabase
+      .from('newsletter_mails')
+      .insert({ user_id: userId, mode, subject, episode_count: episodeCount, sent_at: now.toISOString() })
+      .select('id')
+    if (error) return null
+    return data?.[0]?.id ?? null
+  } catch {
+    return null
+  }
+}
+
+async function markEpisodesSent(supabase, episodeIds, now, mailId) {
   const { error } = await supabase
     .from('episodes')
-    .update({ status: 'newsletter_sent', newsletter_sent_at: now.toISOString() })
+    .update({
+      status: 'newsletter_sent',
+      newsletter_sent_at: now.toISOString(),
+      ...(mailId ? { newsletter_mail_id: mailId } : {}),
+    })
     .in('id', episodeIds)
     .eq('status', 'newsletter_sending')
     .select('id')
@@ -119,6 +140,10 @@ function toNewsletterItem(episode, podcastTitle) {
  * least MIN_OVERVIEW_ITEMS items in the user's style (`user.summary_tone`,
  * `user.summary_prompt_addition`). If it fails, the digest is sent without an overview and
  * `onOverviewError(err)` is told – the overview never holds back a delivery.
+ *
+ * Every sent mail is recorded in `newsletter_mails` (the archive) and its episodes point to it.
+ * If that record fails, the episodes are still marked sent – never mailed twice – and
+ * `archiveErrors` counts the miss.
  */
 export async function sendNewsletterToUser({
   supabase, user, sendEmail, now = new Date(), recentCutoff, episodeIds = null, includeDaily = false,
@@ -162,6 +187,7 @@ export async function sendNewsletterToUser({
       toNewsletterItem(episode, subscriptionsById.get(episode.subscription_id)?.title || 'Podcast')
     ))
     const ids = claimed.map((episode) => episode.id)
+    const subject = buildNewsletterSubject(items, batch.mode)
 
     let overview = null
     if (batch.mode === 'daily' && summarizeDigest && items.length >= MIN_OVERVIEW_ITEMS) {
@@ -173,19 +199,15 @@ export async function sendNewsletterToUser({
     }
 
     try {
-      await sendEmail({
-        to: user.newsletter_email,
-        subject: buildNewsletterSubject(items, batch.mode),
-        items,
-        mode: batch.mode,
-        overview,
-      })
+      await sendEmail({ to: user.newsletter_email, subject, items, mode: batch.mode, overview })
     } catch (err) {
       await releaseEpisodes(supabase, ids)
       throw err
     }
 
-    await markEpisodesSent(supabase, ids, now)
+    const mailId = await recordSentMail(supabase, { userId: user.user_id, mode: batch.mode, subject, episodeCount: ids.length, now })
+    if (!mailId) result.archiveErrors = (result.archiveErrors ?? 0) + 1
+    await markEpisodesSent(supabase, ids, now, mailId)
     result.mailsSent++
     result.episodesSent += ids.length
   }
