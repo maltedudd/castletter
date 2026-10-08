@@ -3,6 +3,8 @@
  * Uses inline styles for maximum email client compatibility
  */
 
+import { hasSummaryContent, MIN_OVERVIEW_ITEMS } from '../newsletter/digest.mjs'
+
 /**
  * @typedef {Object} NewsletterItem
  * @property {string} podcastTitle
@@ -16,6 +18,18 @@
  * @property {string | null} reflection
  * @property {string} audioUrl  Audio/video link, or the article link for website sources
  * @property {'podcast' | 'youtube' | 'website'} [sourceType]
+ * @property {string} [id]
+ * @property {string | null} [publishedAt]
+ */
+
+/**
+ * Integrated overview above the single summaries of a digest (see newsletter/digest.mjs).
+ * @typedef {Object} DigestOverview
+ * @property {string} summary
+ * @property {string[]} themes
+ * @property {string[]} connections
+ * @property {string | null} reflection
+ * @property {number} [itemCount]  How many summaries the overview is based on
  */
 
 
@@ -55,6 +69,13 @@ const strings = {
     immediateArticleHeaderTagline: 'Neuer Artikel, frisch zusammengefasst',
     immediateArticleGreetingBody: (source) => `gerade ist ein neuer Artikel von „${source}“ erschienen. Hier ist deine Zusammenfassung:`,
     settingsLink: 'Einstellungen ändern',
+    overviewLabel: 'Überblick',
+    overviewTitle: (count) => `Das Wichtigste aus ${count} Inhalten`,
+    overviewThemes: 'Kernthemen',
+    overviewConnections: 'Zusammenhänge & Spannungen',
+    overviewReflection: 'Einordnung',
+    overviewNote: (count) => `KI-Überblick auf Basis der ${count} Zusammenfassungen unten; Podcasts sind am stärksten gewichtet, dann YouTube, dann Website (RSS). Die vollständigen Zusammenfassungen folgen.`,
+    missingSummary: 'Für diesen Inhalt liegt keine Zusammenfassung vor.',
   },
   en: {
     subject: 'Your new podcast updates',
@@ -78,6 +99,13 @@ const strings = {
     immediateArticleHeaderTagline: 'New article, freshly summarized',
     immediateArticleGreetingBody: (source) => `a new article from “${source}” just came out. Here is your summary:`,
     settingsLink: 'Change settings',
+    overviewLabel: 'Overview',
+    overviewTitle: (count) => `The essentials from ${count} items`,
+    overviewThemes: 'Key themes',
+    overviewConnections: 'Connections & tensions',
+    overviewReflection: 'Context',
+    overviewNote: (count) => `AI overview based on the ${count} summaries below; podcasts weigh most, then YouTube, then Website (RSS). The complete summaries follow.`,
+    missingSummary: 'No summary is available for this item.',
   },
 }
 
@@ -118,15 +146,39 @@ function linkLabel(item, s) {
   return isArticle(item) ? s.readButton : s.listenButton
 }
 
+/** Every mail except a single immediate one is a digest. */
+function isDigest(newsletters, mode) {
+  return !(mode === 'immediate' && newsletters.length === 1)
+}
+
+/** The overview is shown for digests of at least MIN_OVERVIEW_ITEMS items with content. */
+function visibleOverview(newsletters, mode, overview) {
+  if (!overview || !isDigest(newsletters, mode) || newsletters.length < MIN_OVERVIEW_ITEMS) return null
+  const themes = (overview.themes ?? []).filter(Boolean)
+  const connections = (overview.connections ?? []).filter(Boolean)
+  const summary = overview.summary?.trim() ?? ''
+  if (!summary && themes.length === 0) return null
+  return {
+    summary,
+    themes,
+    connections,
+    reflection: overview.reflection?.trim() || null,
+    count: overview.itemCount ?? newsletters.length,
+  }
+}
+
+
 export function generateEmailHTML(
   userEmail,
   newsletters,
   settingsUrl,
   locale = 'de',
-  mode = 'daily'
+  mode = 'daily',
+  overview = null
 ) {
   const s = strings[locale]
   const intro = getIntro(s, newsletters, mode)
+  const overviewBlock = generateOverviewBlock(visibleOverview(newsletters, mode, overview), s)
   const episodeBlocks = newsletters
     .map((item) => generateEpisodeBlock(item, s))
     .join('')
@@ -157,6 +209,8 @@ export function generateEmailHTML(
         </p>
       </td>
     </tr>
+
+    ${overviewBlock}
 
     <!-- Episode Blocks -->
     ${episodeBlocks}
@@ -197,6 +251,40 @@ function generateSection(title, items, titleColor) {
           </tr>`
 }
 
+function generateOverviewBlock(overview, s) {
+  if (!overview) return ''
+  const list = (title, items) => items.length === 0 ? '' : `
+              <h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(title)}</h3>
+              <ul style="margin: 0; padding-left: 20px;">
+                ${generateBulletList(items)}
+              </ul>`
+  return `<!-- Overview -->
+    <tr>
+      <td style="padding: 20px 30px 10px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f6f9ec; border: 1px solid ${COLORS.accent}; border-left: 6px solid ${COLORS.accent}; border-radius: 8px;">
+          <tr>
+            <td style="padding: 20px;">
+              <p style="margin: 0 0 4px; color: ${COLORS.secondary}; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.overviewLabel)}</p>
+              <h2 style="margin: 0 0 12px; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.overviewTitle(overview.count))}</h2>
+              ${overview.summary ? `<p style="margin: 0; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(overview.summary)}</p>` : ''}${list(s.overviewThemes, overview.themes)}${list(s.overviewConnections, overview.connections)}
+              ${overview.reflection ? `<h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.overviewReflection)}</h3>
+              <p style="margin: 0; color: ${COLORS.primary}; font-size: 14px; line-height: 1.5; font-style: italic;">${escapeHtml(overview.reflection)}</p>` : ''}
+              <p style="margin: 16px 0 0; color: ${COLORS.textMuted}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewNote(overview.count))}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`
+}
+
+/** Intro paragraph, or a notice when the item has no summary at all. */
+function generateIntroHtml(item, s) {
+  if (!hasSummaryContent(item)) {
+    return `<p style="margin: 0; color: ${COLORS.textMuted}; font-size: 14px; line-height: 1.6; font-style: italic;">${escapeHtml(s.missingSummary)}</p>`
+  }
+  return item.intro ? `<p style="margin: 0; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(item.intro)}</p>` : ''
+}
+
 function generateEpisodeBlock(item, s) {
   return `
     <tr>
@@ -213,7 +301,7 @@ function generateEpisodeBlock(item, s) {
           <!-- Intro -->
           <tr>
             <td style="padding: 20px 20px 10px;">
-              <p style="margin: 0; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(item.intro)}</p>
+              ${generateIntroHtml(item, s)}
             </td>
           </tr>
 
@@ -250,61 +338,14 @@ export function generateEmailPlainText(
   newsletters,
   settingsUrl,
   locale = 'de',
-  mode = 'daily'
+  mode = 'daily',
+  overview = null
 ) {
   const s = strings[locale]
   const intro = getIntro(s, newsletters, mode)
+  const overviewText = generateOverviewPlainText(visibleOverview(newsletters, mode, overview), s)
 
-  const blocks = newsletters.map((item) => {
-    const sections = []
-
-    sections.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-    sections.push(`${item.podcastTitle}`)
-    sections.push(`${item.episodeTitle}`)
-    sections.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
-    sections.push('')
-    sections.push(item.intro)
-
-    if (item.bulletPoints.length > 0) {
-      sections.push('')
-      sections.push(`${s.sectionTopics.toUpperCase()}:`)
-      sections.push(item.bulletPoints.map((bp) => `  • ${bp}`).join('\n'))
-    }
-
-    if (item.keyTakeaways.length > 0) {
-      sections.push('')
-      sections.push(`${s.sectionTakeaways.toUpperCase()}:`)
-      sections.push(item.keyTakeaways.map((kt) => `  ★ ${kt}`).join('\n'))
-    }
-
-    if (item.actionItems.length > 0) {
-      sections.push('')
-      sections.push(`${s.sectionTips.toUpperCase()}:`)
-      sections.push(item.actionItems.map((ai) => `  → ${ai}`).join('\n'))
-    }
-
-    if (item.quotes.length > 0) {
-      sections.push('')
-      sections.push(`${s.sectionQuotes.toUpperCase()}:`)
-      sections.push(item.quotes.map((q) => `  „${q}"`).join('\n'))
-    }
-
-    if (item.speakers.length > 0) {
-      sections.push('')
-      sections.push(`${s.sectionSpeakers.toUpperCase()}:`)
-      sections.push(item.speakers.map((sp) => `  • ${sp}`).join('\n'))
-    }
-
-    if (item.reflection) {
-      sections.push('')
-      sections.push(`${s.sectionReflection.toUpperCase()}: ${item.reflection}`)
-    }
-
-    sections.push('')
-    sections.push(`→ ${linkLabel(item, s)}: ${item.audioUrl}`)
-
-    return sections.join('\n')
-  })
+  const blocks = newsletters.map((item) => generatePlainTextBlock(item, s))
 
   return `${intro.title}
 ===========================
@@ -312,10 +353,72 @@ export function generateEmailPlainText(
 ${s.greeting}
 ${intro.body}
 
-${blocks.join('\n\n')}
+${overviewText}${blocks.join('\n\n')}
 ---
 ${s.settingsLink}: ${settingsUrl}
 `
+}
+
+function generateOverviewPlainText(overview, s) {
+  if (!overview) return ''
+  const lines = [`${s.overviewLabel.toUpperCase()} – ${s.overviewTitle(overview.count)}`, '']
+  if (overview.summary) lines.push(overview.summary)
+  if (overview.themes.length > 0) lines.push('', `${s.overviewThemes.toUpperCase()}:`, ...overview.themes.map((t) => `  • ${t}`))
+  if (overview.connections.length > 0) lines.push('', `${s.overviewConnections.toUpperCase()}:`, ...overview.connections.map((c) => `  • ${c}`))
+  if (overview.reflection) lines.push('', `${s.overviewReflection.toUpperCase()}: ${overview.reflection}`)
+  lines.push('', `(${s.overviewNote(overview.count)})`)
+  return `${lines.join('\n')}\n\n`
+}
+
+function generatePlainTextBlock(item, s) {
+  const sections = []
+
+  sections.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+  sections.push(`${item.podcastTitle}`)
+  sections.push(`${item.episodeTitle}`)
+  sections.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`)
+  sections.push('')
+  sections.push(hasSummaryContent(item) ? item.intro : s.missingSummary)
+
+  if (item.bulletPoints.length > 0) {
+    sections.push('')
+    sections.push(`${s.sectionTopics.toUpperCase()}:`)
+    sections.push(item.bulletPoints.map((bp) => `  • ${bp}`).join('\n'))
+  }
+
+  if (item.keyTakeaways.length > 0) {
+    sections.push('')
+    sections.push(`${s.sectionTakeaways.toUpperCase()}:`)
+    sections.push(item.keyTakeaways.map((kt) => `  ★ ${kt}`).join('\n'))
+  }
+
+  if (item.actionItems.length > 0) {
+    sections.push('')
+    sections.push(`${s.sectionTips.toUpperCase()}:`)
+    sections.push(item.actionItems.map((ai) => `  → ${ai}`).join('\n'))
+  }
+
+  if (item.quotes.length > 0) {
+    sections.push('')
+    sections.push(`${s.sectionQuotes.toUpperCase()}:`)
+    sections.push(item.quotes.map((q) => `  „${q}"`).join('\n'))
+  }
+
+  if (item.speakers.length > 0) {
+    sections.push('')
+    sections.push(`${s.sectionSpeakers.toUpperCase()}:`)
+    sections.push(item.speakers.map((sp) => `  • ${sp}`).join('\n'))
+  }
+
+  if (item.reflection) {
+    sections.push('')
+    sections.push(`${s.sectionReflection.toUpperCase()}: ${item.reflection}`)
+  }
+
+  sections.push('')
+  sections.push(`→ ${linkLabel(item, s)}: ${item.audioUrl}`)
+
+  return sections.join('\n')
 }
 
 function escapeHtml(str) {

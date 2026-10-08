@@ -12,6 +12,7 @@ import {
   resetStaleGeneratingEpisodes,
   NewsletterPermanentError,
 } from '../../src/lib/newsletter/generate.mjs'
+import { buildStyleInstructions } from '../../src/lib/newsletter/summary-style.mjs'
 import { makeFakeSupabase } from '../helpers/fake-supabase.mjs'
 
 const NOW = new Date('2026-10-04T08:00:00.000Z')
@@ -130,7 +131,7 @@ test('website prompt sets a word budget relative to the article and drops the mi
   assert.match(long, /## Einordnung\n/)
 })
 
-test('podcast prompt is unchanged word for word', () => {
+test('podcast prompt is unchanged word for word; only the style block is appended', () => {
   const expected = `Du fasst eine Podcast-Episode zusammen. Dein Ziel ist, mir das Wissen aus dem Podcast so zu vermitteln, als hättest du ihn für mich gehört. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln.
 
 Podcast: P
@@ -162,7 +163,9 @@ Erstelle folgende Struktur (exakt diese Überschriften verwenden):
 ## Einordnung
 [Kritische Reflexion oder Kontext – wie das Gesagte einzuordnen ist. 2-3 Sätze. Falls nicht sinnvoll, diese Sektion weglassen.]
 
-Mindestens 3 Bullet Points pro Sektion. Optionale Sektionen nur aufnehmen, wenn der Inhalt sie hergibt.`
+Mindestens 3 Bullet Points pro Sektion. Optionale Sektionen nur aufnehmen, wenn der Inhalt sie hergibt.
+
+${buildStyleInstructions()}`
   assert.equal(buildNewsletterPrompt({ podcastTitle: 'P', episodeTitle: 'E', transcript: 'T' }), expected)
   assert.equal(buildNewsletterPrompt({ podcastTitle: 'P', episodeTitle: 'E', transcript: 'T', sourceType: 'youtube' }), expected)
 })
@@ -310,4 +313,59 @@ test('stale generating claims inside the cutoff are reset, fresh and outside one
 
 test('NewsletterPermanentError is an Error subclass', () => {
   assert.ok(new NewsletterPermanentError('x') instanceof Error)
+})
+
+test('every prompt (podcast, YouTube, article) ends with the tone and the reader addition before the fixed rules', () => {
+  const style = { tone: 'analytical', promptAddition: 'Fokus auf Folgen für Kommunen' }
+  for (const sourceType of ['podcast', 'youtube', 'website']) {
+    const prompt = buildNewsletterPrompt({ podcastTitle: 'P', episodeTitle: 'E', transcript: 'Text', sourceType, style })
+    assert.ok(prompt.endsWith(buildStyleInstructions(style)), sourceType)
+    assert.match(prompt, /Tonalität: Analytisch/)
+    assert.ok(prompt.indexOf('Fokus auf Folgen für Kommunen') < prompt.indexOf('Feste Regeln'), sourceType)
+  }
+})
+
+test('generation uses the tone and prompt addition of the source owner', async () => {
+  const { episode } = setup()
+  const db = makeFakeSupabase({
+    episodes: [episode],
+    episode_newsletters: [],
+    user_settings: [
+      { user_id: 'user-1', summary_tone: 'warm', summary_prompt_addition: 'Erkläre Fachbegriffe kurz.' },
+      { user_id: 'user-2', summary_tone: 'concise', summary_prompt_addition: 'Fremd' },
+    ],
+  })
+  const openrouter = fakeOpenRouter(answer(MODEL_OUTPUT))
+
+  assert.equal(await generateNewsletterForEpisode({ supabase: db, openrouter, model: 'm', episode, now: NOW }), 'ready')
+  const prompt = openrouter.requests[0].messages[0].content
+  assert.match(prompt, /Tonalität: Warm/)
+  assert.match(prompt, /Erkläre Fachbegriffe kurz\./)
+  assert.doesNotMatch(prompt, /Fremd|Tonalität: Prägnant/)
+})
+
+test('missing or invalid style settings fall back to the default tone', async () => {
+  const { episode } = setup()
+  const db = makeFakeSupabase({
+    episodes: [episode],
+    episode_newsletters: [],
+    user_settings: [{ user_id: 'user-1', summary_tone: 'sarkastisch', summary_prompt_addition: '   ' }],
+  })
+  const openrouter = fakeOpenRouter(answer(MODEL_OUTPUT))
+
+  assert.equal(await generateNewsletterForEpisode({ supabase: db, openrouter, model: 'm', episode, now: NOW }), 'ready')
+  assert.ok(openrouter.requests[0].messages[0].content.endsWith(buildStyleInstructions()))
+})
+
+test('a failed style read is retried later instead of ignoring the user\'s choice', async () => {
+  const { db, episode } = setup()
+  const from = db.from.bind(db)
+  db.from = (table) => table === 'user_settings'
+    ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: 'timeout' } }) }) }) }
+    : from(table)
+  const openrouter = fakeOpenRouter(answer(MODEL_OUTPUT))
+
+  assert.equal(await generateNewsletterForEpisode({ supabase: db, openrouter, model: 'm', episode, now: NOW }), 'retry_later')
+  assert.equal(openrouter.requests.length, 0)
+  assert.match(db.data.episodes[0].error_message, /Zusammenfassungs-Stil konnte nicht gelesen werden: timeout/)
 })

@@ -79,10 +79,11 @@ export async function runGenerationOnce(deps) {
 /**
  * For every user: episodes of immediate podcasts that could not be mailed right after
  * generation (fallback), plus the digest of their daily podcasts once their UTC delivery
- * hour has come. Errors for one user do not stop the others.
+ * hour has come – with the integrated overview in the user's style when `summarizeDigest`
+ * is set. Errors for one user do not stop the others.
  */
 export async function runSendSweep(deps) {
-  const { supabase, config, now, log, sendEmail } = deps
+  const { supabase, config, now, log, sendEmail, summarizeDigest = null } = deps
   const currentHourUTC = now().getUTCHours()
   const cutoff = getEpisodeAgeCutoff(now(), config.maxEpisodeAgeDays)
 
@@ -90,7 +91,7 @@ export async function runSendSweep(deps) {
 
   const { data: users, error } = await supabase
     .from('user_settings')
-    .select('user_id, newsletter_email, newsletter_delivery_hour')
+    .select('user_id, newsletter_email, newsletter_delivery_hour, summary_tone, summary_prompt_addition')
   if (error) throw new Error(`Einstellungen konnten nicht gelesen werden: ${error.message}`)
 
   const summary = { users: 0, dailyDue: 0, mailsSent: 0, episodesSent: 0, errors: 0, archiveErrors: 0, staleSendingReset }
@@ -100,7 +101,10 @@ export async function runSendSweep(deps) {
     if (includeDaily) summary.dailyDue++
     try {
       const result = await sendNewsletterToUser({
-        supabase, user, sendEmail, now: now(), recentCutoff: cutoff, includeDaily,
+        supabase, user, sendEmail, now: now(), recentCutoff: cutoff, includeDaily, summarizeDigest,
+        onOverviewError: (err) => log('warn', 'digest_overview_failed', {
+          userId: user.user_id, error: err instanceof Error ? err.message : String(err),
+        }),
       })
       summary.mailsSent += result.mailsSent
       summary.episodesSent += result.episodesSent

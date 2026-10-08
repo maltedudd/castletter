@@ -3,6 +3,9 @@
 // subscription (`podcast_subscriptions.delivery_mode`). Dependency-free: the Supabase client and the mail sender
 // are injected so claim/release behaviour can be tested without a database or Resend.
 
+import { MIN_OVERVIEW_ITEMS, sortDigestItems } from './digest.mjs'
+import { normalizeSummaryStyle } from './summary-style.mjs'
+
 export const DELIVERY_MODES = ['daily', 'immediate']
 export const DEFAULT_DELIVERY_MODE = 'daily'
 
@@ -106,6 +109,7 @@ function toNewsletterItem(episode, podcastTitle) {
     : episode.episode_newsletters
 
   return {
+    id: episode.id,
     podcastTitle,
     episodeTitle: episode.title,
     intro: newsletter?.intro || '',
@@ -117,6 +121,7 @@ function toNewsletterItem(episode, podcastTitle) {
     reflection: newsletter?.reflection || null,
     audioUrl: episode.audio_url,
     sourceType: episode.source_type ?? 'podcast',
+    publishedAt: episode.published_at ?? null,
   }
 }
 
@@ -127,8 +132,14 @@ function toNewsletterItem(episode, podcastTitle) {
  * to specific episodes (the immediate send right after generation). Only episodes this call
  * claimed are mailed; a failed send releases its claim and rethrows.
  *
- * `sendEmail({ to, subject, items, mode })` must throw if the mail was not accepted; `mode`
- * ('immediate' | 'daily') selects the mail's introduction text.
+ * `sendEmail({ to, subject, items, mode, overview })` must throw if the mail was not accepted;
+ * `mode` ('immediate' | 'daily') selects the mail's introduction text. Items are in
+ * chronological order (see sortDigestItems in digest.mjs).
+ *
+ * `summarizeDigest(items, style)` (optional) creates the overview of a daily digest with at
+ * least MIN_OVERVIEW_ITEMS items in the user's style (`user.summary_tone`,
+ * `user.summary_prompt_addition`). If it fails, the digest is sent without an overview and
+ * `onOverviewError(err)` is told – the overview never holds back a delivery.
  *
  * Every sent mail is recorded in `newsletter_mails` (the archive) and its episodes point to it.
  * If that record fails, the episodes are still marked sent – never mailed twice – and
@@ -136,6 +147,7 @@ function toNewsletterItem(episode, podcastTitle) {
  */
 export async function sendNewsletterToUser({
   supabase, user, sendEmail, now = new Date(), recentCutoff, episodeIds = null, includeDaily = false,
+  summarizeDigest = null, onOverviewError = () => {},
 }) {
   const result = { mailsSent: 0, episodesSent: 0 }
 
@@ -171,14 +183,23 @@ export async function sendNewsletterToUser({
     const claimed = batch.episodes.filter((episode) => claimedIds.has(episode.id))
     if (claimed.length === 0) continue
 
-    const items = claimed.map((episode) =>
+    const items = sortDigestItems(claimed.map((episode) =>
       toNewsletterItem(episode, subscriptionsById.get(episode.subscription_id)?.title || 'Podcast')
-    )
+    ))
     const ids = claimed.map((episode) => episode.id)
     const subject = buildNewsletterSubject(items, batch.mode)
 
+    let overview = null
+    if (batch.mode === 'daily' && summarizeDigest && items.length >= MIN_OVERVIEW_ITEMS) {
+      try {
+        overview = (await summarizeDigest(items, normalizeSummaryStyle(user))) ?? null
+      } catch (err) {
+        try { onOverviewError(err) } catch { /* reporting must not block the delivery */ }
+      }
+    }
+
     try {
-      await sendEmail({ to: user.newsletter_email, subject, items, mode: batch.mode })
+      await sendEmail({ to: user.newsletter_email, subject, items, mode: batch.mode, overview })
     } catch (err) {
       await releaseEpisodes(supabase, ids)
       throw err

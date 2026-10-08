@@ -189,12 +189,23 @@ Nach der Transkription läuft in jeder Iteration zusätzlich:
 1. **Generierung:** Die älteste `transcribed`-Episode innerhalb von
    `TRANSCRIPTION_MAX_EPISODE_AGE_DAYS` wird per Claim (`generating_newsletter` + Marker)
    zusammengefasst und auf `newsletter_ready` gesetzt. Hängende Claims (> 15 min) gehen
-   zurück auf `transcribed`. Permanente Fehler → `newsletter_failed`.
+   zurück auf `transcribed`. Permanente Fehler → `newsletter_failed`. Tonalität und
+   optionale Prompt-Ergänzung kommen aus den Einstellungen der Besitzerin/des Besitzers
+   (`user_settings.summary_tone`, `summary_prompt_addition`).
 2. **Sofortversand:** Hat die Besitzerin/der Besitzer „Sofort“ gewählt, geht die Mail
    direkt danach raus.
 3. **Versand-Sweep, einmal pro UTC-Stunde:** tägliche Sammelmails für alle mit passender
    Stunde, Sofort-Mails als Fallback, Reset hängender Versand-Claims. Ein fehlgeschlagener
    Sweep wird beim nächsten Durchlauf wiederholt.
+
+**Tägliche Sammelmail:** Die Einzelzusammenfassungen erscheinen chronologisch. Ab zwei
+Inhalten steht darüber ein **Überblick**: eine quellenübergreifende Management-Zusammenfassung,
+die Podcasts am stärksten gewichtet (zuerst und am ausführlichsten), dann YouTube, dann
+Website (RSS) vor allem ergänzend. Der Worker erzeugt ihn beim Versand aus den gespeicherten
+Einzelzusammenfassungen (nicht aus Transkripten) im Stil der Nutzerin/des Nutzers (ein
+Modellaufruf pro Sammelmail,
+`OPENROUTER_MODEL`). Schlägt er fehl, geht die Sammelmail ohne Überblick raus
+(`digest_overview_failed` im Log). Der Vercel-Fallback-Cron erzeugt keinen Überblick.
 
 Das Alters-Limit gilt für die ganze Pipeline (statt der 48 h der Vercel-Crons).
 
@@ -208,8 +219,10 @@ Benötigt zusätzlich `RESEND_API_KEY` und `APP_URL` (für den Einstellungs-Link
 
 ## Voraussetzungen
 
-1. Migrationen `supabase/migrations/20261003_add_episode_transcription_attempts.sql` und
-   `supabase/migrations/20261005_add_youtube_channel_sources.sql` sind auf der Datenbank
+1. Migrationen `supabase/migrations/20261003_add_episode_transcription_attempts.sql`,
+   `supabase/migrations/20261005_add_youtube_channel_sources.sql`,
+   `supabase/migrations/20261006_add_website_rss_sources.sql` und
+   `supabase/migrations/20261008_add_summary_style_settings.sql` sind auf der Datenbank
    angewendet – **vor** dem Deployment dieser Worker- bzw. App-Version. Fehlen die Spalten,
    loggt jede Iteration `iteration_failed` und der Feed-Check schlägt fehl.
 2. Docker mit Compose v2 und BuildKit (Standard bei aktuellen Docker-Versionen).

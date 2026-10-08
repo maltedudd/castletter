@@ -71,3 +71,81 @@ test('website articles link to the article instead of "listen" and get article w
   assert.match(mixed, /→ Episode anhören: https:\/\/cdn\.example\/a\.mp3/)
   assert.match(mixed, /→ Artikel lesen: https:\/\/blog\.example\.com\/artikel/)
 })
+
+// ─── Kanban #38: overview ────────────────────────────────────────────
+
+const typed = (id, sourceType, publishedAt) => ({
+  ...item(`Quelle ${id}`, `Titel ${id}`),
+  id,
+  sourceType,
+  publishedAt,
+  intro: `Intro ${id}`,
+})
+const DIGEST = [
+  typed('w', 'website', '2026-10-07T01:00:00.000Z'),
+  typed('y', 'youtube', '2026-10-07T02:00:00.000Z'),
+  typed('p', 'podcast', '2026-10-07T03:00:00.000Z'),
+]
+const OVERVIEW = {
+  summary: 'Quer durch alle <Quellen>.',
+  themes: ['Energie: „Quelle p“ und „Quelle w“'],
+  connections: ['„Quelle y“ widerspricht „Quelle p“'],
+  reflection: 'Bleibt spannend.',
+  itemCount: 3,
+}
+
+test('digest shows the highlighted overview first, then the complete summaries in the given (chronological) order', () => {
+  const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
+  const order = ['<!-- Overview -->', 'Das Wichtigste aus 3 Inhalten', 'Quer durch alle &lt;Quellen&gt;.', 'Kernthemen', 'Zusammenhänge &amp; Spannungen', 'Bleibt spannend.',
+    'Podcasts sind am stärksten gewichtet', 'Intro w', 'Intro y', 'Intro p']
+  let last = -1
+  for (const marker of order) {
+    const index = html.indexOf(marker)
+    assert.ok(index > last, `${marker} out of order`)
+    last = index
+  }
+  assert.match(html, /border-left: 6px solid #9FC131/)
+  assert.match(html, /KI-Überblick auf Basis der 3 Zusammenfassungen unten/)
+  assert.doesNotMatch(html, /<Quellen>/)
+  assert.doesNotMatch(html, /Source type group|Podcasts \(1\)/, 'no grouping by source type')
+
+  const text = generateEmailPlainText(DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
+  const textOrder = ['ÜBERBLICK – Das Wichtigste aus 3 Inhalten', 'Quer durch alle <Quellen>.', 'KERNTHEMEN:', 'ZUSAMMENHÄNGE & SPANNUNGEN:', 'EINORDNUNG: Bleibt spannend.',
+    'Intro w', 'Intro y', 'Intro p']
+  last = -1
+  for (const marker of textOrder) {
+    const index = text.indexOf(marker)
+    assert.ok(index > last, `${marker} out of order (text)`)
+    last = index
+  }
+  assert.doesNotMatch(text, /▌/)
+})
+
+test('overview in English', () => {
+  const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'en', 'daily', OVERVIEW)
+  assert.match(html, /The essentials from 3 items/)
+  assert.match(html, /Key themes/)
+  assert.match(html, /Connections &amp; tensions/)
+  assert.match(html, /podcasts weigh most, then YouTube, then Website \(RSS\)/)
+  assert.match(generateEmailPlainText(DIGEST, 'https://s', 'en', 'daily', OVERVIEW), /OVERVIEW – The essentials from 3 items/)
+})
+
+test('a single item, an immediate mail or an empty overview shows no overview block', () => {
+  assert.doesNotMatch(generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily'), /<!-- Overview -->/)
+
+  const single = [DIGEST[2]]
+  assert.doesNotMatch(generateEmailHTML('m@x.de', single, 'https://s', 'de', 'daily', OVERVIEW), /<!-- Overview -->/)
+  assert.doesNotMatch(generateEmailHTML('m@x.de', single, 'https://s', 'de', 'immediate', OVERVIEW), /<!-- Overview -->/)
+  assert.doesNotMatch(generateEmailPlainText(single, 'https://s', 'de', 'immediate', OVERVIEW), /ÜBERBLICK/)
+
+  const empty = { summary: '  ', themes: [], connections: ['x'], reflection: null }
+  assert.doesNotMatch(generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', empty), /<!-- Overview -->/)
+})
+
+test('an item without a summary gets a notice instead of an empty block', () => {
+  const missing = { ...typed('leer', 'podcast', null), intro: '', bulletPoints: [], keyTakeaways: [] }
+  const html = generateEmailHTML('m@x.de', [missing, DIGEST[0]], 'https://s', 'de', 'daily')
+  assert.match(html, /Für diesen Inhalt liegt keine Zusammenfassung vor\./)
+  assert.match(html, /Titel leer/)
+  assert.match(generateEmailPlainText([missing], 'https://s', 'en', 'daily'), /No summary is available for this item\./)
+})

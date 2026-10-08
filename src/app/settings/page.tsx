@@ -12,7 +12,25 @@ import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Textarea } from '@/components/ui/textarea'
 import { localHourToUTC, utcHourToLocal, getHourOptions, getTimezoneName } from '@/lib/utils/timezone'
+import {
+  DEFAULT_SUMMARY_TONE,
+  MAX_PROMPT_ADDITION_CHARS,
+  SUMMARY_TONES,
+  normalizePromptAddition,
+  normalizeSummaryTone,
+} from '@/lib/newsletter/summary-style.mjs'
+import type { SummaryTone } from '@/types/database'
+
+// Translation keys of the tone presets (label + one-line description).
+const TONE_TEXTS: Record<SummaryTone, { label: string; description: string }> = {
+  neutral: { label: 'toneNeutralLabel', description: 'toneNeutralDescription' },
+  concise: { label: 'toneConciseLabel', description: 'toneConciseDescription' },
+  analytical: { label: 'toneAnalyticalLabel', description: 'toneAnalyticalDescription' },
+  warm: { label: 'toneWarmLabel', description: 'toneWarmDescription' },
+}
 
 export default function SettingsPage() {
   const { user, loading: authLoading } = useAuth()
@@ -22,6 +40,8 @@ export default function SettingsPage() {
 
   const [email, setEmail] = useState('')
   const [deliveryHour, setDeliveryHour] = useState(8) // Default: 8:00 AM local time
+  const [summaryTone, setSummaryTone] = useState<SummaryTone>(DEFAULT_SUMMARY_TONE as SummaryTone)
+  const [promptAddition, setPromptAddition] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +59,7 @@ export default function SettingsPage() {
       try {
         const { data, error } = await supabase
           .from('user_settings')
-          .select('newsletter_email, newsletter_delivery_hour')
+          .select('newsletter_email, newsletter_delivery_hour, summary_tone, summary_prompt_addition')
           .eq('user_id', currentUser.id)
           .single()
 
@@ -53,6 +73,8 @@ export default function SettingsPage() {
           // Convert UTC hour to local hour for display
           setEmail(data.newsletter_email)
           setDeliveryHour(utcHourToLocal(data.newsletter_delivery_hour))
+          setSummaryTone(normalizeSummaryTone(data.summary_tone) as SummaryTone)
+          setPromptAddition(normalizePromptAddition(data.summary_prompt_addition) ?? '')
         } else {
           // First time: use login email as default
           setEmail(currentUser.email || '')
@@ -95,6 +117,14 @@ export default function SettingsPage() {
       return
     }
 
+    // maxLength already limits the field; this guards pasted or programmatic values.
+    if (promptAddition.length > MAX_PROMPT_ADDITION_CHARS) {
+      setError(t('errorPromptAdditionTooLong', { max: MAX_PROMPT_ADDITION_CHARS }))
+      setSaving(false)
+      return
+    }
+    const cleanedAddition = normalizePromptAddition(promptAddition)
+
     try {
       // Convert local hour to UTC before saving
       const utcHour = localHourToUTC(deliveryHour)
@@ -105,6 +135,8 @@ export default function SettingsPage() {
           user_id: user.id,
           newsletter_email: email,
           newsletter_delivery_hour: utcHour,
+          summary_tone: normalizeSummaryTone(summaryTone),
+          summary_prompt_addition: cleanedAddition,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' })
 
@@ -115,6 +147,7 @@ export default function SettingsPage() {
         return
       }
 
+      setPromptAddition(cleanedAddition ?? '')
       setSuccess(true)
       setSaving(false)
 
@@ -234,6 +267,74 @@ export default function SettingsPage() {
                 </p>
               </div>
 
+              {/* Summary style (Kanban #38): tone preset and optional prompt addition */}
+              <div className="space-y-3 border-t pt-6">
+                <h2 className="text-lg font-semibold">
+                  {t('styleSectionTitle')}
+                </h2>
+                <p className="text-sm text-muted-foreground">{t('styleSectionDescription')}</p>
+              </div>
+
+              <div className="space-y-3">
+                <p id="summary-tone-label" className="text-base font-medium">
+                  {t('toneLabel')}
+                </p>
+                <RadioGroup
+                  aria-labelledby="summary-tone-label"
+                  value={summaryTone}
+                  onValueChange={(value) => setSummaryTone(normalizeSummaryTone(value) as SummaryTone)}
+                  disabled={saving}
+                  className="grid gap-3 sm:grid-cols-2"
+                >
+                  {(SUMMARY_TONES as SummaryTone[]).map((tone) => {
+                    const optionId = `summary-tone-${tone}`
+                    return (
+                      <Label
+                        key={tone}
+                        htmlFor={optionId}
+                        className="flex cursor-pointer items-start gap-3 rounded-lg border p-4 font-normal transition-colors hover:bg-muted/50 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+                      >
+                        <RadioGroupItem
+                          id={optionId}
+                          value={tone}
+                          aria-labelledby={`${optionId}-label`}
+                          aria-describedby={`${optionId}-hint`}
+                          className="mt-1"
+                        />
+                        <span className="space-y-1">
+                          <span id={`${optionId}-label`} className="block font-medium">{t(TONE_TEXTS[tone].label)}</span>
+                          <span id={`${optionId}-hint`} className="block text-sm text-muted-foreground">{t(TONE_TEXTS[tone].description)}</span>
+                        </span>
+                      </Label>
+                    )
+                  })}
+                </RadioGroup>
+              </div>
+
+              <div className="space-y-3">
+                <Label htmlFor="summary-prompt-addition" className="text-base font-medium">
+                  {t('promptAdditionLabel')}
+                </Label>
+                <Textarea
+                  id="summary-prompt-addition"
+                  value={promptAddition}
+                  onChange={(e) => setPromptAddition(e.target.value)}
+                  maxLength={MAX_PROMPT_ADDITION_CHARS}
+                  rows={3}
+                  placeholder={t('promptAdditionPlaceholder')}
+                  aria-describedby="summary-prompt-addition-hint summary-prompt-addition-counter"
+                  disabled={saving}
+                />
+                <div className="flex flex-col gap-1 text-sm text-muted-foreground sm:flex-row sm:justify-between sm:gap-4">
+                  <p id="summary-prompt-addition-hint">
+                    {t('promptAdditionHint', { max: MAX_PROMPT_ADDITION_CHARS })}
+                  </p>
+                  <p id="summary-prompt-addition-counter" aria-live="polite" className="shrink-0 tabular-nums">
+                    {t('promptAdditionCounter', { count: promptAddition.length, max: MAX_PROMPT_ADDITION_CHARS })}
+                  </p>
+                </div>
+              </div>
+
               {/* Save Button */}
               <div className="pt-4">
                 <Button
@@ -258,6 +359,7 @@ export default function SettingsPage() {
             <p>{t('infoBullet2')}</p>
             <p>{t('infoBullet3')}</p>
             <p>{t('infoBullet4')}</p>
+            <p>{t('infoBullet5')}</p>
           </CardContent>
         </Card>
       </div>

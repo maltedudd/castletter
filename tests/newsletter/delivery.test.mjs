@@ -275,6 +275,88 @@ test('deliverImmediatelyIfWanted mails only episodes of immediate podcasts', asy
   assert.equal(statusOf(db, 'daily'), 'newsletter_ready')
 })
 
+// ─── Kanban #38: digest order, overview and style ─────────────────────
+
+const TYPED_SUBSCRIPTIONS = [
+  { id: 'sub-pod', title: 'Lage der Nation', user_id: 'user-1', delivery_mode: 'daily', source_type: 'podcast' },
+  { id: 'sub-yt', title: 'Kanal', user_id: 'user-1', delivery_mode: 'daily', source_type: 'youtube' },
+  { id: 'sub-web', title: 'Stadtblog', user_id: 'user-1', delivery_mode: 'daily', source_type: 'website' },
+  { id: 'sub-now', title: 'Hotel Matze', user_id: 'user-1', delivery_mode: 'immediate', source_type: 'podcast' },
+]
+
+function typedDb(episodes) {
+  return makeFakeSupabase({ podcast_subscriptions: TYPED_SUBSCRIPTIONS, episodes })
+}
+
+const MIXED_EPISODES = () => [
+  episode('web', { subscription_id: 'sub-web', source_type: 'website', published_at: '2026-10-03T01:00:00.000Z' }),
+  episode('yt', { subscription_id: 'sub-yt', source_type: 'youtube', published_at: '2026-10-03T02:00:00.000Z' }),
+  episode('pod-late', { subscription_id: 'sub-pod', source_type: 'podcast', published_at: '2026-10-03T05:00:00.000Z' }),
+  episode('pod-early', { subscription_id: 'sub-pod', source_type: 'podcast', published_at: '2026-10-03T03:00:00.000Z' }),
+]
+
+test('daily digest items stay chronological across source types', async () => {
+  const db = typedDb(MIXED_EPISODES())
+  const { mails, sendEmail } = recordingMailer()
+
+  await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true })
+
+  assert.deepEqual(mails[0].items.map((i) => [i.id, i.sourceType, i.publishedAt]), [
+    ['web', 'website', '2026-10-03T01:00:00.000Z'],
+    ['yt', 'youtube', '2026-10-03T02:00:00.000Z'],
+    ['pod-early', 'podcast', '2026-10-03T03:00:00.000Z'],
+    ['pod-late', 'podcast', '2026-10-03T05:00:00.000Z'],
+  ])
+  assert.equal(mails[0].overview, null, 'no overview without a generator')
+})
+
+test('daily digest with two or more items gets the overview in the user\'s style', async () => {
+  const db = typedDb(MIXED_EPISODES())
+  const { mails, sendEmail } = recordingMailer()
+  const calls = []
+  const overview = { summary: 'Querschnitt.', themes: ['Energie'], connections: [], reflection: null, itemCount: 4 }
+  const summarizeDigest = async (items, style) => { calls.push({ ids: items.map((i) => i.id), style }); return overview }
+  const user = { ...USER, summary_tone: 'analytical', summary_prompt_addition: ' Fokus Kommunen ' }
+
+  await sendNewsletterToUser({ supabase: db, user, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true, summarizeDigest })
+
+  assert.deepEqual(calls, [{ ids: ['web', 'yt', 'pod-early', 'pod-late'], style: { tone: 'analytical', promptAddition: 'Fokus Kommunen' } }])
+  assert.deepEqual(mails[0].overview, overview)
+  assert.deepEqual(mails[0].items.map((i) => i.id), ['web', 'yt', 'pod-early', 'pod-late'], 'single summaries stay complete')
+})
+
+test('a single digest item and immediate mails get no overview (and no model call)', async () => {
+  const db = typedDb([
+    episode('only', { subscription_id: 'sub-pod', source_type: 'podcast' }),
+    episode('now', { subscription_id: 'sub-now', source_type: 'podcast' }),
+  ])
+  const { mails, sendEmail } = recordingMailer()
+  let calls = 0
+  const summarizeDigest = async () => { calls++; return { summary: 'x', themes: [], connections: [], reflection: null } }
+
+  await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true, summarizeDigest })
+
+  assert.equal(calls, 0)
+  assert.deepEqual(mails.map((m) => [m.mode, m.overview]), [['immediate', null], ['daily', null]])
+})
+
+test('a failing overview never blocks the digest: sent without overview, error reported', async () => {
+  const db = typedDb(MIXED_EPISODES())
+  const { mails, sendEmail } = recordingMailer()
+  const errors = []
+
+  const result = await sendNewsletterToUser({
+    supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true,
+    summarizeDigest: async () => { throw new Error('model down') },
+    onOverviewError: (err) => { errors.push(err.message); throw new Error('reporter broken') },
+  })
+
+  assert.deepEqual(result, { mailsSent: 1, episodesSent: 4 })
+  assert.equal(mails[0].overview, null)
+  assert.deepEqual(errors, ['model down'])
+  for (const row of db.data.episodes) assert.equal(row.status, 'newsletter_sent')
+})
+
 // ─── Archive: one record per sent mail ───────────────────────────────
 
 test('a daily digest is recorded as one mail that holds all its episodes', async () => {
