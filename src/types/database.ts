@@ -5,6 +5,9 @@
 
 export type NewsletterDeliveryMode = 'daily' | 'immediate'
 
+/** Kanban #38: tone of the AI summaries (UI: sachlich, prägnant, analytisch, warm). */
+export type SummaryTone = 'neutral' | 'concise' | 'analytical' | 'warm'
+
 export interface UserSettings {
   id: string
   user_id: string
@@ -12,6 +15,9 @@ export interface UserSettings {
   newsletter_delivery_hour: number // 0-23 (UTC), used for the daily digest
   /** @deprecated delivery mode is chosen per podcast (podcast_subscriptions.delivery_mode) */
   newsletter_delivery_mode: NewsletterDeliveryMode
+  summary_tone: SummaryTone
+  /** Optional style/perspective addition for the summaries, max. 500 characters */
+  summary_prompt_addition: string | null
   created_at: string
   updated_at: string
 }
@@ -21,6 +27,8 @@ export interface UserSettingsInsert {
   newsletter_email: string
   newsletter_delivery_hour: number
   newsletter_delivery_mode?: NewsletterDeliveryMode
+  summary_tone?: SummaryTone
+  summary_prompt_addition?: string | null
   updated_at?: string
 }
 
@@ -28,6 +36,8 @@ export interface UserSettingsUpdate {
   newsletter_email?: string
   newsletter_delivery_hour?: number
   newsletter_delivery_mode?: NewsletterDeliveryMode
+  summary_tone?: SummaryTone
+  summary_prompt_addition?: string | null
   updated_at?: string
 }
 

@@ -3,6 +3,7 @@
 // injected, so prompt, parsing and the claim/lease handling run under node:test.
 
 import { buildNewsletterCompletionOptions } from '../cron/newsletter-request.mjs'
+import { buildStyleInstructions, loadSummaryStyle } from './summary-style.mjs'
 
 export const MAX_TRANSCRIPT_CHARS = 150_000 // ~150k chars stays safely within the model context
 
@@ -68,10 +69,17 @@ function truncateText(text, label) {
 /**
  * Prompt for the newsletter of one item. Podcast episodes and YouTube videos share the
  * podcast prompt; website articles get a prompt whose length scales with the article. The
- * section headings are identical, so parsing, review and delivery stay the same.
+ * section headings are identical, so parsing, review and delivery stay the same. `style`
+ * (the user's tone and prompt addition, see summary-style.mjs) is appended to both.
  */
-export function buildNewsletterPrompt({ podcastTitle, episodeTitle, transcript: fullTranscript, sourceType = 'podcast' }) {
-  if (sourceType === 'website') return buildArticlePrompt({ sourceTitle: podcastTitle, articleTitle: episodeTitle, text: fullTranscript })
+export function buildNewsletterPrompt({ podcastTitle, episodeTitle, transcript: fullTranscript, sourceType = 'podcast', style }) {
+  const prompt = sourceType === 'website'
+    ? buildArticlePrompt({ sourceTitle: podcastTitle, articleTitle: episodeTitle, text: fullTranscript })
+    : buildPodcastPrompt({ podcastTitle, episodeTitle, transcript: fullTranscript })
+  return `${prompt}\n\n${buildStyleInstructions(style)}`
+}
+
+function buildPodcastPrompt({ podcastTitle, episodeTitle, transcript: fullTranscript }) {
   const transcript = truncateText(fullTranscript, 'Transkript')
 
   return `Du fasst eine Podcast-Episode zusammen. Dein Ziel ist, mir das Wissen aus dem Podcast so zu vermitteln, als hättest du ihn für mich gehört. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln.
@@ -194,11 +202,14 @@ export async function generateNewsletterForEpisode({ supabase, openrouter, model
       throw new NewsletterPermanentError('Kein Transkript vorhanden')
     }
 
+    // The owner's tone and prompt addition; a read error is retried like any temporary error.
+    const style = await loadSummaryStyle(supabase, getPodcastRef(episode)?.user_id)
     const prompt = buildNewsletterPrompt({
       podcastTitle: getPodcastRef(episode)?.title || 'Podcast',
       episodeTitle: episode.title,
       transcript: episode.transcript,
       sourceType: episode.source_type,
+      style,
     })
     const completion = await openrouter.chat.completions.create(
       buildNewsletterCompletionOptions(model, [{ role: 'user', content: prompt }])
@@ -303,13 +314,13 @@ export function parseNewsletter(markdown) {
 }
 
 /** Extract raw text of a markdown section (between ## heading and next ## or end) */
-function extractSectionRaw(markdown, heading) {
+export function extractSectionRaw(markdown, heading) {
   const regex = new RegExp(`## ${heading}\\n([\\s\\S]*?)(?=\\n## |$)`, 'i')
   return regex.exec(markdown)?.[1] || ''
 }
 
 /** Extract a section as plain text (for non-bullet sections like Zusammenfassung) */
-function extractSection(markdown, heading) {
+export function extractSection(markdown, heading) {
   return extractSectionRaw(markdown, heading)
     .split('\n')
     .map((line) => line.trim())
@@ -319,7 +330,7 @@ function extractSection(markdown, heading) {
 }
 
 /** Extract bullet points from a markdown section */
-function extractBulletPoints(section) {
+export function extractBulletPoints(section) {
   return section
     .split('\n')
     .map((line) => line.trim())
