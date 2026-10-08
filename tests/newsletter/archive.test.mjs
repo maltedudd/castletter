@@ -37,15 +37,3 @@ test('sortMailEpisodes orders oldest first without mutating; mailIdsOf is unique
   assert.deepEqual(list.map((e) => e.id), ['b', 'a'])
   assert.deepEqual(mailIdsOf([{ newsletter_mail_id: 'm1' }, { newsletter_mail_id: null }, { newsletter_mail_id: 'm1' }, { newsletter_mail_id: 'm2' }]), ['m1', 'm2'])
 })
-
-test('sortMailEpisodes follows the digest order: podcast → YouTube → website, oldest first within a type', () => {
-  const list = [
-    { ...ep('web', '2026-10-06T01:00:00Z', 'Stadtblog'), source_type: 'website' },
-    { ...ep('yt', '2026-10-06T02:00:00Z', 'Kanal'), source_type: 'youtube' },
-    { ...ep('pod-late', '2026-10-06T05:00:00Z', 'Lage'), source_type: 'podcast' },
-    { ...ep('pod-early', '2026-10-06T03:00:00Z', 'Lage'), source_type: 'podcast' },
-  ]
-  assert.deepEqual(sortMailEpisodes(list).map((e) => e.id), ['pod-early', 'pod-late', 'yt', 'web'])
-  const entry = toArchiveEntry({ id: 'm', mode: 'daily', subject: 's', sent_at: 'x', episode_count: 4, episodes: list })
-  assert.deepEqual(entry.sources, ['Lage', 'Kanal', 'Stadtblog'])
-})

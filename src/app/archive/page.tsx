@@ -120,7 +120,6 @@ export default function ArchivePage() {
         episodes (
           id,
           published_at,
-          source_type,
           podcast_subscriptions ( title, cover_image_url )
         )
         `,

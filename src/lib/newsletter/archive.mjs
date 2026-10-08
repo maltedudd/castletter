@@ -1,8 +1,6 @@
 // Newsletter archive: one entry per sent mail (`newsletter_mails`) with the episodes it held.
 // Pure mapping of the Supabase rows, so list and detail page share it and it runs under node:test.
 
-import { sortDigestItems } from './digest.mjs'
-
 export const ARCHIVE_PAGE_SIZE = 20
 export const ARCHIVE_MODES = ['daily', 'immediate']
 
@@ -11,20 +9,9 @@ function one(ref) {
   return (Array.isArray(ref) ? ref[0] : ref) ?? null
 }
 
-/**
- * Episodes of a mail in the order they appeared in it: the digest order of digest.mjs
- * (podcast → YouTube → website, then oldest first, then source, title and id).
- */
+/** Episodes of a mail in the order they appeared in it (oldest first, like the mail). */
 export function sortMailEpisodes(episodes) {
-  const items = (episodes ?? []).map((episode) => ({
-    episode,
-    id: episode.id,
-    sourceType: episode.source_type ?? undefined,
-    publishedAt: episode.published_at,
-    podcastTitle: one(episode.podcast_subscriptions)?.title,
-    episodeTitle: episode.title,
-  }))
-  return sortDigestItems(items).map((item) => item.episode)
+  return [...(episodes ?? [])].sort((a, b) => String(a.published_at).localeCompare(String(b.published_at)))
 }
 
 /**
