@@ -43,7 +43,8 @@ test('Handle und Profil-URL werden auf Benutzername und Instanz zurückgeführt'
 
 test('ungültige Eingaben werden abgelehnt', () => {
   for (const input of ['', '   ', 'anna', '@anna', 'https://social.example/', 'https://social.example/about',
-    'ftp://social.example/@anna', 'anna@localhost', '@an na@social.example', 'x'.repeat(600), null, 42]) {
+    'ftp://social.example/@anna', 'anna@localhost', '@an na@social.example', 'x'.repeat(600), null, 42,
+    'https://social.example/@anna%E0%A4%A', 'https://127.0.0.1/@anna', 'https://social.example:8443/@anna']) {
     assert.equal(parseMastodonInput(input), null, String(input))
   }
 })

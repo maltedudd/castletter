@@ -47,7 +47,13 @@ export function parseMastodonInput(input) {
     return null
   }
   if (url.username || url.password || url.port) return null
-  const path = PROFILE_PATH_PATTERN.exec(decodeURIComponent(url.pathname))
+  let pathname
+  try {
+    pathname = decodeURIComponent(url.pathname)
+  } catch {
+    return null
+  }
+  const path = PROFILE_PATH_PATTERN.exec(pathname)
   if (!path) return null
   // `/@user@home` is a remote profile shown on another instance: the account lives at `home`.
   return publicAccount(path[1] ?? path[3], path[2] ?? url.hostname)
