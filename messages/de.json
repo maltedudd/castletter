@@ -113,7 +113,7 @@
     "infoBullet2": "• Du kannst eine andere Email-Adresse als deine Login-Email verwenden",
     "infoBullet3": "• Die Versandzeit wird automatisch in deine lokale Zeitzone konvertiert",
     "infoBullet4": "• Änderungen wirken sich ab dem nächsten Newsletter aus",
-    "infoBullet5": "• Bei mehreren Inhalten beginnt der tägliche Newsletter mit einem Überblick; danach folgen Podcasts, YouTube und Website (RSS)",
+    "infoBullet5": "• Bei mehreren Inhalten beginnt der tägliche Newsletter mit einem Überblick, der Podcasts am stärksten gewichtet, dann YouTube, dann Website (RSS); danach folgen alle Zusammenfassungen",
     "styleSectionTitle": "Stil der Zusammenfassungen",
     "styleSectionDescription": "Gilt für die einzelnen Zusammenfassungen und für den Überblick am Anfang des täglichen Newsletters. Wirkt ab der nächsten neu erstellten Zusammenfassung; bereits erstellte bleiben unverändert.",
     "toneLabel": "Tonalität",

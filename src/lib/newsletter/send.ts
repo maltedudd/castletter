@@ -47,7 +47,7 @@ export function createResendMailer(resend: Resend) {
 
 /**
  * Sends a user's ready newsletters per podcast delivery mode (see delivery.mjs). This Vercel
- * fallback sorts and groups the digest but creates no AI overview: the model call would not
+ * fallback sends the digest without an AI overview: the model call would not
  * fit its time limit, and the Docker worker (which does create it) handles delivery.
  */
 export function deliverNewsletters(

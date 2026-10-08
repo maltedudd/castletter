@@ -133,8 +133,8 @@ function toNewsletterItem(episode, podcastTitle) {
  * claimed are mailed; a failed send releases its claim and rethrows.
  *
  * `sendEmail({ to, subject, items, mode, overview })` must throw if the mail was not accepted;
- * `mode` ('immediate' | 'daily') selects the mail's introduction text. Items are in digest
- * order (podcast → YouTube → website, then publication time; see digest.mjs).
+ * `mode` ('immediate' | 'daily') selects the mail's introduction text. Items are in
+ * chronological order (see sortDigestItems in digest.mjs).
  *
  * `summarizeDigest(items, style)` (optional) creates the overview of a daily digest with at
  * least MIN_OVERVIEW_ITEMS items in the user's style (`user.summary_tone`,

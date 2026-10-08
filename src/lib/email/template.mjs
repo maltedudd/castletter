@@ -3,7 +3,7 @@
  * Uses inline styles for maximum email client compatibility
  */
 
-import { groupDigestItems, hasSummaryContent, MIN_OVERVIEW_ITEMS } from '../newsletter/digest.mjs'
+import { hasSummaryContent, MIN_OVERVIEW_ITEMS } from '../newsletter/digest.mjs'
 
 /**
  * @typedef {Object} NewsletterItem
@@ -74,8 +74,7 @@ const strings = {
     overviewThemes: 'Kernthemen',
     overviewConnections: 'Zusammenhänge & Spannungen',
     overviewReflection: 'Einordnung',
-    overviewNote: (count) => `KI-Überblick auf Basis der ${count} Zusammenfassungen unten. Die vollständigen Zusammenfassungen folgen, nach Quelltyp gruppiert.`,
-    groupLabels: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'Weitere Inhalte' },
+    overviewNote: (count) => `KI-Überblick auf Basis der ${count} Zusammenfassungen unten; Podcasts sind am stärksten gewichtet, dann YouTube, dann Website (RSS). Die vollständigen Zusammenfassungen folgen.`,
     missingSummary: 'Für diesen Inhalt liegt keine Zusammenfassung vor.',
   },
   en: {
@@ -105,8 +104,7 @@ const strings = {
     overviewThemes: 'Key themes',
     overviewConnections: 'Connections & tensions',
     overviewReflection: 'Context',
-    overviewNote: (count) => `AI overview based on the ${count} summaries below. The complete summaries follow, grouped by source type.`,
-    groupLabels: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'More content' },
+    overviewNote: (count) => `AI overview based on the ${count} summaries below; podcasts weigh most, then YouTube, then Website (RSS). The complete summaries follow.`,
     missingSummary: 'No summary is available for this item.',
   },
 }
@@ -148,7 +146,7 @@ function linkLabel(item, s) {
   return isArticle(item) ? s.readButton : s.listenButton
 }
 
-/** Every mail except a single immediate one is a digest: grouped by source type. */
+/** Every mail except a single immediate one is a digest. */
 function isDigest(newsletters, mode) {
   return !(mode === 'immediate' && newsletters.length === 1)
 }
@@ -169,9 +167,6 @@ function visibleOverview(newsletters, mode, overview) {
   }
 }
 
-function groupLabel(s, group) {
-  return `${s.groupLabels[group.sourceType] ?? s.groupLabels.other} (${group.items.length})`
-}
 
 export function generateEmailHTML(
   userEmail,
@@ -184,11 +179,9 @@ export function generateEmailHTML(
   const s = strings[locale]
   const intro = getIntro(s, newsletters, mode)
   const overviewBlock = generateOverviewBlock(visibleOverview(newsletters, mode, overview), s)
-  const episodeBlocks = isDigest(newsletters, mode)
-    ? groupDigestItems(newsletters)
-      .map((group) => generateGroupHeading(groupLabel(s, group)) + group.items.map((item) => generateEpisodeBlock(item, s)).join(''))
-      .join('')
-    : newsletters.map((item) => generateEpisodeBlock(item, s)).join('')
+  const episodeBlocks = newsletters
+    .map((item) => generateEpisodeBlock(item, s))
+    .join('')
 
   return `<!DOCTYPE html>
 <html lang="${locale}">
@@ -284,16 +277,6 @@ function generateOverviewBlock(overview, s) {
     </tr>`
 }
 
-function generateGroupHeading(label) {
-  return `
-    <!-- Source type group -->
-    <tr>
-      <td style="padding: 24px 30px 0;">
-        <h2 style="margin: 0; padding-bottom: 6px; border-bottom: 2px solid ${COLORS.accent}; color: ${COLORS.secondary}; font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(label)}</h2>
-      </td>
-    </tr>`
-}
-
 /** Intro paragraph, or a notice when the item has no summary at all. */
 function generateIntroHtml(item, s) {
   if (!hasSummaryContent(item)) {
@@ -362,10 +345,7 @@ export function generateEmailPlainText(
   const intro = getIntro(s, newsletters, mode)
   const overviewText = generateOverviewPlainText(visibleOverview(newsletters, mode, overview), s)
 
-  const blocks = isDigest(newsletters, mode)
-    ? groupDigestItems(newsletters).map((group) =>
-      [`▌ ${groupLabel(s, group).toUpperCase()}`, ...group.items.map((item) => generatePlainTextBlock(item, s))].join('\n\n'))
-    : newsletters.map((item) => generatePlainTextBlock(item, s))
+  const blocks = newsletters.map((item) => generatePlainTextBlock(item, s))
 
   return `${intro.title}
 ===========================

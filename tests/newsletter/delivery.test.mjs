@@ -295,17 +295,17 @@ const MIXED_EPISODES = () => [
   episode('pod-early', { subscription_id: 'sub-pod', source_type: 'podcast', published_at: '2026-10-03T03:00:00.000Z' }),
 ]
 
-test('daily digest items are ordered podcast → YouTube → website, then by publication time', async () => {
+test('daily digest items stay chronological across source types', async () => {
   const db = typedDb(MIXED_EPISODES())
   const { mails, sendEmail } = recordingMailer()
 
   await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true })
 
   assert.deepEqual(mails[0].items.map((i) => [i.id, i.sourceType, i.publishedAt]), [
+    ['web', 'website', '2026-10-03T01:00:00.000Z'],
+    ['yt', 'youtube', '2026-10-03T02:00:00.000Z'],
     ['pod-early', 'podcast', '2026-10-03T03:00:00.000Z'],
     ['pod-late', 'podcast', '2026-10-03T05:00:00.000Z'],
-    ['yt', 'youtube', '2026-10-03T02:00:00.000Z'],
-    ['web', 'website', '2026-10-03T01:00:00.000Z'],
   ])
   assert.equal(mails[0].overview, null, 'no overview without a generator')
 })
@@ -320,9 +320,9 @@ test('daily digest with two or more items gets the overview in the user\'s style
 
   await sendNewsletterToUser({ supabase: db, user, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true, summarizeDigest })
 
-  assert.deepEqual(calls, [{ ids: ['pod-early', 'pod-late', 'yt', 'web'], style: { tone: 'analytical', promptAddition: 'Fokus Kommunen' } }])
+  assert.deepEqual(calls, [{ ids: ['web', 'yt', 'pod-early', 'pod-late'], style: { tone: 'analytical', promptAddition: 'Fokus Kommunen' } }])
   assert.deepEqual(mails[0].overview, overview)
-  assert.deepEqual(mails[0].items.map((i) => i.id), ['pod-early', 'pod-late', 'yt', 'web'], 'single summaries stay complete')
+  assert.deepEqual(mails[0].items.map((i) => i.id), ['web', 'yt', 'pod-early', 'pod-late'], 'single summaries stay complete')
 })
 
 test('a single digest item and immediate mails get no overview (and no model call)', async () => {

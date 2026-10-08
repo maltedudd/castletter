@@ -198,11 +198,12 @@ Nach der Transkription läuft in jeder Iteration zusätzlich:
    Stunde, Sofort-Mails als Fallback, Reset hängender Versand-Claims. Ein fehlgeschlagener
    Sweep wird beim nächsten Durchlauf wiederholt.
 
-**Tägliche Sammelmail:** Inhalte erscheinen nach Quelltyp gruppiert – Podcasts, dann
-YouTube, dann Website (RSS), innerhalb eines Typs chronologisch. Ab zwei Inhalten steht
-darüber ein **Überblick**: eine quellenübergreifende Management-Zusammenfassung, die der
-Worker beim Versand aus den gespeicherten Einzelzusammenfassungen (nicht aus Transkripten)
-im Stil der Nutzerin/des Nutzers erzeugt (ein Modellaufruf pro Sammelmail,
+**Tägliche Sammelmail:** Die Einzelzusammenfassungen erscheinen chronologisch. Ab zwei
+Inhalten steht darüber ein **Überblick**: eine quellenübergreifende Management-Zusammenfassung,
+die Podcasts am stärksten gewichtet (zuerst und am ausführlichsten), dann YouTube, dann
+Website (RSS) vor allem ergänzend. Der Worker erzeugt ihn beim Versand aus den gespeicherten
+Einzelzusammenfassungen (nicht aus Transkripten) im Stil der Nutzerin/des Nutzers (ein
+Modellaufruf pro Sammelmail,
 `OPENROUTER_MODEL`). Schlägt er fehl, geht die Sammelmail ohne Überblick raus
 (`digest_overview_failed` im Log). Der Vercel-Fallback-Cron erzeugt keinen Überblick.
 

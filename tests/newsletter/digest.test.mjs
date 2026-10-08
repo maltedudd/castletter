@@ -5,7 +5,7 @@ import {
   MIN_OVERVIEW_ITEMS,
   MAX_OVERVIEW_ITEMS,
   sortDigestItems,
-  groupDigestItems,
+  sortByOverviewPriority,
   hasSummaryContent,
   buildDigestOverviewPrompt,
   parseDigestOverview,
@@ -43,45 +43,39 @@ const MIXED = [
 
 const ids = (items) => items.map((i) => i.id)
 
-test('digest order: podcasts, then YouTube, then Website (RSS); oldest first within a type', () => {
-  assert.deepEqual(SOURCE_TYPE_ORDER, ['podcast', 'youtube', 'website'])
-  assert.deepEqual(ids(sortDigestItems(MIXED)), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2'])
+test('single summaries stay chronological across source types (oldest first)', () => {
+  assert.deepEqual(ids(sortDigestItems(MIXED)), ['y1', 'p1', 'w1', 'p2', 'y2', 'w2'])
 })
 
-test('sorting is deterministic for every input order and does not mutate the input', () => {
+test('overview priority: podcasts, then YouTube, then Website (RSS); chronological within a type', () => {
+  assert.deepEqual(SOURCE_TYPE_ORDER, ['podcast', 'youtube', 'website'])
+  assert.deepEqual(ids(sortByOverviewPriority(MIXED)), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2'])
+  assert.deepEqual(ids(sortByOverviewPriority([item('x', 'weird', null), item('legacy', undefined, null), MIXED[0]])), ['legacy', 'w1', 'x'])
+})
+
+test('both orders are deterministic for every input order and do not mutate the input', () => {
   const before = ids(MIXED)
-  const expected = ids(sortDigestItems(MIXED))
   const permutations = [[...MIXED].reverse(), [MIXED[3], MIXED[0], MIXED[5], MIXED[1], MIXED[4], MIXED[2]]]
-  for (const input of permutations) assert.deepEqual(ids(sortDigestItems(input)), expected)
+  for (const sort of [sortDigestItems, sortByOverviewPriority]) {
+    const expected = ids(sort(MIXED))
+    for (const input of permutations) assert.deepEqual(ids(sort(input)), expected)
+  }
   assert.deepEqual(ids(MIXED), before)
 })
 
-test('ties on time are broken by source, title and id; missing dates go last; legacy items count as podcasts', () => {
+test('ties on time are broken by source, title and id; missing or invalid dates go last', () => {
   const same = '2026-10-07T08:00:00.000Z'
   const items = [
     item('b', 'podcast', same, { podcastTitle: 'B' }),
-    item('a2', 'podcast', same, { podcastTitle: 'A', episodeTitle: 'Z' }),
-    item('a1', 'podcast', same, { podcastTitle: 'A', episodeTitle: 'Y' }),
+    item('a2', 'youtube', same, { podcastTitle: 'A', episodeTitle: 'Z' }),
+    item('a1', 'website', same, { podcastTitle: 'A', episodeTitle: 'Y' }),
     item('nodate', 'podcast', null),
     item('invalid', 'podcast', 'kein Datum'),
-    item('legacy', undefined, '2026-10-01T00:00:00.000Z'),
-    item('future', 'newsletter', '2026-01-01T00:00:00.000Z'),
+    item('early', undefined, '2026-10-01T00:00:00.000Z'),
   ]
-  assert.deepEqual(ids(sortDigestItems(items)), ['legacy', 'a1', 'a2', 'b', 'invalid', 'nodate', 'future'])
+  assert.deepEqual(ids(sortDigestItems(items)), ['early', 'a1', 'a2', 'b', 'invalid', 'nodate'])
   assert.deepEqual(sortDigestItems(undefined), [])
-})
-
-test('groups follow the digest order and skip empty types', () => {
-  const groups = groupDigestItems(MIXED)
-  assert.deepEqual(groups.map((g) => [g.sourceType, ids(g.items)]), [
-    ['podcast', ['p1', 'p2']],
-    ['youtube', ['y1', 'y2']],
-    ['website', ['w1', 'w2']],
-  ])
-  const noYoutube = groupDigestItems([MIXED[0], MIXED[2]])
-  assert.deepEqual(noYoutube.map((g) => g.sourceType), ['podcast', 'website'])
-  assert.deepEqual(groupDigestItems([]), [])
-  assert.deepEqual(groupDigestItems([item('x', 'weird', null)]).map((g) => g.sourceType), ['other'])
+  assert.deepEqual(sortByOverviewPriority(undefined), [])
 })
 
 test('hasSummaryContent: intro or bullets count, empty fallbacks do not', () => {
@@ -91,15 +85,15 @@ test('hasSummaryContent: intro or bullets count, empty fallbacks do not', () => 
   assert.equal(hasSummaryContent(item('a', 'podcast', null, { intro: null, bulletPoints: null, keyTakeaways: undefined })), false)
 })
 
-test('overview prompt is built from the stored summaries and metadata in digest order, never from transcripts', () => {
+test('overview prompt is built from the stored summaries and metadata in priority order, never from transcripts', () => {
   const items = MIXED.map((i) => ({ ...i, transcript: 'GEHEIMES VOLLTRANSKRIPT', reflection: `Einordnung ${i.id}` }))
   const prompt = buildDigestOverviewPrompt(items, { tone: 'concise' })
 
   assert.doesNotMatch(prompt, /GEHEIMES VOLLTRANSKRIPT/)
   assert.match(prompt, /^Du schreibst den Überblick am Anfang meines Castletter-Digests/)
   assert.match(prompt, /Inhalte \(6\):/)
-  assert.match(prompt, /\[1\] Podcast-Episode · Quelle: Quelle p1 · 2026-10-06\nTitel: Titel p1\nZusammenfassung: Zusammenfassung p1\.\nHauptthemen: Thema p1\nWichtige Aussagen: Aussage p1\nEinordnung: Einordnung p1/)
-  assert.ok(prompt.indexOf('[3] YouTube-Video · Quelle: Quelle y1') < prompt.indexOf('[5] Website-Artikel · Quelle: Quelle w1'))
+  assert.match(prompt, /\[1\] Podcast-Episode \(Priorität 1\) · Quelle: Quelle p1 · 2026-10-06\nTitel: Titel p1\nZusammenfassung: Zusammenfassung p1\.\nHauptthemen: Thema p1\nWichtige Aussagen: Aussage p1\nEinordnung: Einordnung p1/)
+  assert.ok(prompt.indexOf('[3] YouTube-Video (Priorität 2) · Quelle: Quelle y1') < prompt.indexOf('[5] Website-Artikel (Priorität 3) · Quelle: Quelle w1'))
   assert.match(prompt, /Verknüpfe die Inhalte ausdrücklich/)
   assert.match(prompt, /Wiederhole keine einzelnen Stichpunkte/)
   assert.match(prompt, /statt Zusammenhänge zu konstruieren/)
@@ -193,4 +187,30 @@ test('generator: fewer than two summarised items or an empty answer → no overv
 
   const silent = createDigestOverviewGenerator({ openrouter: fakeOpenRouter(''), model: 'm' })
   assert.equal(await silent(MIXED), null)
+})
+
+test('overview prompt weighs podcasts first and most, YouTube next, articles mainly as supplement', () => {
+  const prompt = buildDigestOverviewPrompt(MIXED)
+  const rules = [
+    'Gewichtung nach Quelltyp (bestimmt Reihenfolge und Raum, nicht die Wahrheit einer Aussage)',
+    '1. Podcast-Episoden haben die höchste Priorität: Baue Überblick und Kernthemen in erster Linie auf ihnen auf, nenne sie zuerst und gib ihnen den meisten Raum.',
+    '2. YouTube-Videos folgen danach.',
+    '3. Website-Artikel dienen vor allem zur Ergänzung, Bestätigung oder Einordnung',
+  ]
+  let last = -1
+  for (const rule of rules) {
+    const index = prompt.indexOf(rule)
+    assert.ok(index > last, rule)
+    last = index
+  }
+  assert.ok(prompt.indexOf('Gewichtung nach Quelltyp') < prompt.indexOf('Inhalte (6):'))
+})
+
+test('when the overview input is capped, lower-priority items are left out first', () => {
+  const articles = Array.from({ length: MAX_OVERVIEW_ITEMS }, (_, i) => item(`w${String(i).padStart(2, '0')}`, 'website', '2026-10-01T00:00:00.000Z'))
+  const podcast = item('late-podcast', 'podcast', '2026-10-07T23:00:00.000Z')
+  const prompt = buildDigestOverviewPrompt([...articles, podcast])
+  assert.match(prompt, /\[1\] Podcast-Episode \(Priorität 1\) · Quelle: Quelle late-podcast/)
+  assert.doesNotMatch(prompt, /Titel w24/)
+  assert.match(prompt, /\(1 weitere Inhalte stehen im Digest/)
 })

@@ -72,7 +72,7 @@ test('website articles link to the article instead of "listen" and get article w
   assert.match(mixed, /→ Artikel lesen: https:\/\/blog\.example\.com\/artikel/)
 })
 
-// ─── Kanban #38: overview and grouping ───────────────────────────────
+// ─── Kanban #38: overview ────────────────────────────────────────────
 
 const typed = (id, sourceType, publishedAt) => ({
   ...item(`Quelle ${id}`, `Titel ${id}`),
@@ -94,10 +94,10 @@ const OVERVIEW = {
   itemCount: 3,
 }
 
-test('digest shows the highlighted overview first, then the groups podcast → YouTube → Website (RSS)', () => {
+test('digest shows the highlighted overview first, then the complete summaries in the given (chronological) order', () => {
   const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
   const order = ['<!-- Overview -->', 'Das Wichtigste aus 3 Inhalten', 'Quer durch alle &lt;Quellen&gt;.', 'Kernthemen', 'Zusammenhänge &amp; Spannungen', 'Bleibt spannend.',
-    'Podcasts (1)', 'Intro p', 'YouTube (1)', 'Intro y', 'Website (RSS) (1)', 'Intro w']
+    'Podcasts sind am stärksten gewichtet', 'Intro w', 'Intro y', 'Intro p']
   let last = -1
   for (const marker of order) {
     const index = html.indexOf(marker)
@@ -107,37 +107,36 @@ test('digest shows the highlighted overview first, then the groups podcast → Y
   assert.match(html, /border-left: 6px solid #9FC131/)
   assert.match(html, /KI-Überblick auf Basis der 3 Zusammenfassungen unten/)
   assert.doesNotMatch(html, /<Quellen>/)
+  assert.doesNotMatch(html, /Source type group|Podcasts \(1\)/, 'no grouping by source type')
 
   const text = generateEmailPlainText(DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
   const textOrder = ['ÜBERBLICK – Das Wichtigste aus 3 Inhalten', 'Quer durch alle <Quellen>.', 'KERNTHEMEN:', 'ZUSAMMENHÄNGE & SPANNUNGEN:', 'EINORDNUNG: Bleibt spannend.',
-    '▌ PODCASTS (1)', 'Intro p', '▌ YOUTUBE (1)', 'Intro y', '▌ WEBSITE (RSS) (1)', 'Intro w']
+    'Intro w', 'Intro y', 'Intro p']
   last = -1
   for (const marker of textOrder) {
     const index = text.indexOf(marker)
     assert.ok(index > last, `${marker} out of order (text)`)
     last = index
   }
+  assert.doesNotMatch(text, /▌/)
 })
 
-test('overview and groups in English', () => {
+test('overview in English', () => {
   const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'en', 'daily', OVERVIEW)
   assert.match(html, /The essentials from 3 items/)
   assert.match(html, /Key themes/)
   assert.match(html, /Connections &amp; tensions/)
-  assert.match(html, /Website \(RSS\) \(1\)/)
+  assert.match(html, /podcasts weigh most, then YouTube, then Website \(RSS\)/)
   assert.match(generateEmailPlainText(DIGEST, 'https://s', 'en', 'daily', OVERVIEW), /OVERVIEW – The essentials from 3 items/)
 })
 
-test('without an overview the digest is still grouped; a single item or an immediate mail shows no overview', () => {
-  const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily')
-  assert.doesNotMatch(html, /<!-- Overview -->/)
-  assert.ok(html.indexOf('Podcasts (1)') < html.indexOf('Website (RSS) (1)'))
+test('a single item, an immediate mail or an empty overview shows no overview block', () => {
+  assert.doesNotMatch(generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily'), /<!-- Overview -->/)
 
   const single = [DIGEST[2]]
   assert.doesNotMatch(generateEmailHTML('m@x.de', single, 'https://s', 'de', 'daily', OVERVIEW), /<!-- Overview -->/)
-  const immediate = generateEmailHTML('m@x.de', single, 'https://s', 'de', 'immediate', OVERVIEW)
-  assert.doesNotMatch(immediate, /<!-- Overview -->|Podcasts \(1\)/)
-  assert.doesNotMatch(generateEmailPlainText(single, 'https://s', 'de', 'immediate', OVERVIEW), /ÜBERBLICK|▌/)
+  assert.doesNotMatch(generateEmailHTML('m@x.de', single, 'https://s', 'de', 'immediate', OVERVIEW), /<!-- Overview -->/)
+  assert.doesNotMatch(generateEmailPlainText(single, 'https://s', 'de', 'immediate', OVERVIEW), /ÜBERBLICK/)
 
   const empty = { summary: '  ', themes: [], connections: ['x'], reflection: null }
   assert.doesNotMatch(generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', empty), /<!-- Overview -->/)
