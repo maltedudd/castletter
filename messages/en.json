@@ -286,7 +286,12 @@
     "sectionTips": "Tips & methods",
     "sectionQuotes": "Quotes & terms",
     "sectionSpeakers": "Who says what",
-    "sectionReflection": "Context"
+    "sectionReflection": "Context",
+    "sectionGroupPodcast": "Podcasts",
+    "sectionGroupYoutube": "YouTube",
+    "sectionGroupWebsite": "Website (RSS)",
+    "sectionGroupSocial": "Social",
+    "sectionGroupOther": "More items"
   },
   "email": {
     "subject": "Your new podcast updates",

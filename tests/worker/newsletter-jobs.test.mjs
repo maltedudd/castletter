@@ -194,7 +194,7 @@ test('send sweep creates the digest overview in the user\'s style and logs a fai
   const data = tables({ hour: 7, episodes: [readyEpisode('a', 1), readyEpisode('b', 2)] })
   data.user_settings[0] = { ...data.user_settings[0], summary_tone: 'warm', summary_prompt_addition: 'Mit Beispielen' }
   const styles = []
-  const overview = { summary: 'Querschnitt.', themes: [], connections: [], reflection: null, itemCount: 2 }
+  const overview = { themes: [{ text: 'Energie', sources: [] }], connections: [], reflection: null, itemCount: 2 }
   const deps = makeDeps(makeFakeSupabase(data), { summarizeDigest: async (items, style) => { styles.push(style); return overview } })
 
   await runSendSweep(deps)

@@ -4,7 +4,6 @@ import {
   MAX_TRANSCRIPT_CHARS,
   GENERATION_LEASE_MS,
   buildNewsletterPrompt,
-  buildArticleSummaryBudget,
   parseNewsletter,
   getPodcastRef,
   buildGenerationMarker,
@@ -88,47 +87,32 @@ test('prompt carries podcast, episode and transcript; long transcripts are trunc
   assert.ok(!long.includes('x'.repeat(MAX_TRANSCRIPT_CHARS + 1)))
 })
 
-test('buildNewsletterPrompt uses website wording for articles, keeps the section headings and forbids additions', () => {
+test('buildNewsletterPrompt uses website wording for articles and forbids additions', () => {
   const text = `Artikeltext ${'Satz mit Inhalt. '.repeat(500)}`.trim()
   const prompt = buildNewsletterPrompt({ podcastTitle: 'Stadtblog', episodeTitle: 'Wärmenetz', transcript: text, sourceType: 'website' })
   assert.match(prompt, /^Du fasst einen Artikel einer Website zusammen\./)
   assert.match(prompt, /ausschließlich auf den folgenden Text/)
   assert.ok(prompt.includes(`\nWebsite: Stadtblog\nArtikel: Wärmenetz\n\nText:\n${text}\n`))
   assert.doesNotMatch(prompt, /Podcast|Transkript/)
-  for (const heading of ['Zusammenfassung', 'Hauptthemen', 'Wichtige Aussagen und Erkenntnisse', 'Tipps und Methoden', 'Zitate und Begriffe', 'Wer sagt was', 'Einordnung']) {
-    assert.ok(prompt.includes(`\n## ${heading}\n`), heading)
-  }
   // YouTube and unknown types keep the podcast prompt unchanged.
   const base = { podcastTitle: 'P', episodeTitle: 'E', transcript: 'T' }
   assert.equal(buildNewsletterPrompt({ ...base, sourceType: 'youtube' }), buildNewsletterPrompt(base))
 })
 
-const words = (n) => Array.from({ length: n }, (_, i) => `wort${i}`).join(' ')
-
-test('buildArticleSummaryBudget: about a quarter of the article, within 60–500 words, three tiers', () => {
-  assert.deepEqual(buildArticleSummaryBudget(words(611)), { articleWords: 611, targetWords: 150, tier: 'medium' })
-  assert.deepEqual(buildArticleSummaryBudget(words(150)), { articleWords: 150, targetWords: 60, tier: 'short' })
-  assert.deepEqual(buildArticleSummaryBudget(words(399)), { articleWords: 399, targetWords: 100, tier: 'short' })
-  assert.deepEqual(buildArticleSummaryBudget(words(1200)), { articleWords: 1200, targetWords: 300, tier: 'long' })
-  assert.deepEqual(buildArticleSummaryBudget(words(5000)), { articleWords: 5000, targetWords: 500, tier: 'long' })
-  assert.equal(buildArticleSummaryBudget('  ein\n\nkurzer   Text ').articleWords, 3)
-})
-
-test('website prompt sets a word budget relative to the article and drops the minimum bullet count', () => {
-  const prompt = buildNewsletterPrompt({ podcastTitle: 'tagesschau.de', episodeTitle: 'Schülerproteste', transcript: words(611), sourceType: 'website' })
-  assert.match(prompt, /Der Artikel hat etwa 610 Wörter\. Die gesamte Zusammenfassung darf höchstens etwa 150 Wörter umfassen/)
-  assert.doesNotMatch(prompt, /Mindestens 3 Bullet Points/)
-  assert.match(prompt, /## Hauptthemen\n- \[2–4 Stichpunkte/)
-  assert.match(prompt, /## Wichtige Aussagen und Erkenntnisse\n- \[3–5 Stichpunkte/)
-
-  const short = buildNewsletterPrompt({ podcastTitle: 'B', episodeTitle: 'E', transcript: words(200), sourceType: 'website' })
-  assert.match(short, /höchstens etwa 60 Wörter/)
-  assert.match(short, /Nur die Abschnitte „Zusammenfassung“, „Hauptthemen“ und „Wichtige Aussagen und Erkenntnisse“/)
-  assert.doesNotMatch(short, /## Einordnung/)
-
-  const long = buildNewsletterPrompt({ podcastTitle: 'B', episodeTitle: 'E', transcript: words(3000), sourceType: 'website' })
-  assert.match(long, /höchstens etwa 500 Wörter/)
-  assert.match(long, /## Einordnung\n/)
+test('Kanban #42: website prompt asks for the summary section only, in 2–3 precise sentences', () => {
+  for (const length of [50, 3000]) {
+    const prompt = buildNewsletterPrompt({ podcastTitle: 'tagesschau.de', episodeTitle: 'Schülerproteste', transcript: 'Wort '.repeat(length), sourceType: 'website' })
+    assert.match(prompt, /## Zusammenfassung\n\[2–3 präzise, vollständige Sätze/)
+    assert.match(prompt, /Nur den Abschnitt „Zusammenfassung“ ausgeben – keine Stichpunkte, keine weiteren Abschnitte\. Höchstens drei Sätze\./)
+    const structure = prompt.slice(0, prompt.indexOf('Tonalität:'))
+    for (const heading of ['Hauptthemen', 'Wichtige Aussagen und Erkenntnisse', 'Tipps und Methoden', 'Zitate und Begriffe', 'Wer sagt was', 'Einordnung']) {
+      assert.ok(!structure.includes(`## ${heading}`), heading)
+    }
+  }
+  // The short answer parses into a summary without bullet lists.
+  const parsed = parseNewsletter('## Zusammenfassung\nDie Stadt baut ein Wärmenetz. Es kostet 12 Mio. Euro. Start ist 2027.')
+  assert.equal(parsed.intro, 'Die Stadt baut ein Wärmenetz. Es kostet 12 Mio. Euro. Start ist 2027.')
+  assert.deepEqual(parsed.bulletPoints, [])
 })
 
 test('podcast prompt is unchanged word for word; only the style block is appended', () => {

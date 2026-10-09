@@ -198,12 +198,21 @@ Nach der Transkription läuft in jeder Iteration zusätzlich:
    Stunde, Sofort-Mails als Fallback, Reset hängender Versand-Claims. Ein fehlgeschlagener
    Sweep wird beim nächsten Durchlauf wiederholt.
 
-**Tägliche Sammelmail:** Die Einzelzusammenfassungen erscheinen chronologisch. Ab zwei
-Inhalten steht darüber ein **Überblick**: eine quellenübergreifende Management-Zusammenfassung,
-die Podcasts am stärksten gewichtet (zuerst und am ausführlichsten), dann YouTube, dann
-Website (RSS) vor allem ergänzend. Der Worker erzeugt ihn beim Versand aus den gespeicherten
-Einzelzusammenfassungen (nicht aus Transkripten) im Stil der Nutzerin/des Nutzers (ein
-Modellaufruf pro Sammelmail,
+**Tägliche Sammelmail (Kanban #38, #42):** Betreff „Deine neuen Podcast-Updates (N Episoden)“
+nur, wenn ausschließlich Podcasts enthalten sind, sonst quellenneutral „Dein Castletter: N neue
+Inhalte“. Die Einzelbeiträge stehen in festen Sektionen **Podcasts → YouTube → Website (RSS)
+→ Social** (unbekannte Typen zuletzt unter „Weitere Inhalte“), innerhalb jeder Sektion nach
+Veröffentlichung (älteste zuerst). Website-Artikel erscheinen kompakt: Quelle, verlinkter
+Titel und höchstens drei Sätze (der Artikel-Prompt erzeugt nur noch 2–3 Sätze; ältere,
+längere Zusammenfassungen werden bei der Darstellung gekürzt). Podcasts und YouTube behalten
+die ausführliche Darstellung, Social-Posts werden nicht gekürzt. Ab zwei Inhalten steht
+darüber ein **Überblick**, der direkt mit konkreten Kernthemen beginnt (keine allgemeine
+Einleitung). Jeder Punkt verlinkt die Beiträge, aus denen er stammt: Das Modell nennt die
+Nummern der Inhalte, der Worker löst sie gegen genau diese Beiträge auf; Punkte ohne gültigen
+Beleg werden verworfen, ohne belegte Kernthemen entfällt der Überblick. Gewichtung: Podcasts
+am stärksten, dann YouTube, dann Website (RSS) vor allem ergänzend. Der Worker erzeugt ihn
+beim Versand aus den gespeicherten Einzelzusammenfassungen (nicht aus Transkripten) im Stil
+der Nutzerin/des Nutzers (ein Modellaufruf pro Sammelmail,
 `OPENROUTER_MODEL`). Schlägt er fehl, geht die Sammelmail ohne Überblick raus
 (`digest_overview_failed` im Log). Der Vercel-Fallback-Cron erzeugt keinen Überblick.
 

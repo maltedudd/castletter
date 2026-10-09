@@ -2,14 +2,21 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   SOURCE_TYPE_ORDER,
+  DIGEST_SECTION_ORDER,
   MIN_OVERVIEW_ITEMS,
   MAX_OVERVIEW_ITEMS,
+  MAX_WEBSITE_SENTENCES,
   sortDigestItems,
-  sortByOverviewPriority,
+  groupDigestItems,
+  isPodcastOnly,
   hasSummaryContent,
+  selectOverviewItems,
   buildDigestOverviewPrompt,
   parseDigestOverview,
   createDigestOverviewGenerator,
+  splitSentences,
+  limitSentences,
+  websiteSummary,
 } from '../../src/lib/newsletter/digest.mjs'
 import { buildStyleInstructions } from '../../src/lib/newsletter/summary-style.mjs'
 
@@ -43,39 +50,56 @@ const MIXED = [
 
 const ids = (items) => items.map((i) => i.id)
 
-test('single summaries stay chronological across source types (oldest first)', () => {
-  assert.deepEqual(ids(sortDigestItems(MIXED)), ['y1', 'p1', 'w1', 'p2', 'y2', 'w2'])
+test('Kanban #42: digest order is podcasts → YouTube → Website (RSS), chronological within each type', () => {
+  assert.deepEqual(SOURCE_TYPE_ORDER, ['podcast', 'youtube', 'website', 'social'])
+  assert.deepEqual(DIGEST_SECTION_ORDER, ['podcast', 'youtube', 'website', 'social', 'other'])
+  assert.deepEqual(ids(sortDigestItems(MIXED)), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2'])
+  assert.deepEqual(ids(sortDigestItems([item('x', 'weird', null), item('s', 'social', null), item('legacy', undefined, null), MIXED[0]])), ['legacy', 'w1', 's', 'x'])
 })
 
-test('overview priority: podcasts, then YouTube, then Website (RSS); chronological within a type', () => {
-  assert.deepEqual(SOURCE_TYPE_ORDER, ['podcast', 'youtube', 'website'])
-  assert.deepEqual(ids(sortByOverviewPriority(MIXED)), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2'])
-  assert.deepEqual(ids(sortByOverviewPriority([item('x', 'weird', null), item('legacy', undefined, null), MIXED[0]])), ['legacy', 'w1', 'x'])
+test('groupDigestItems: fixed sections, empty ones left out; Social is its own section, never Website', () => {
+  const social = item('s1', 'social', '2026-10-07T05:00:00.000Z', { intro: '', bulletPoints: [], keyTakeaways: [] })
+  const groups = groupDigestItems([...MIXED, social, item('x', 'weird', null)])
+  assert.deepEqual(groups.map((g) => [g.type, ids(g.items)]), [
+    ['podcast', ['p1', 'p2']],
+    ['youtube', ['y1', 'y2']],
+    ['website', ['w1', 'w2']],
+    ['social', ['s1']],
+    ['other', ['x']],
+  ])
+  assert.deepEqual(groupDigestItems([MIXED[0], MIXED[2]]).map((g) => g.type), ['podcast', 'website'])
+  assert.deepEqual(groupDigestItems(undefined), [])
 })
 
-test('both orders are deterministic for every input order and do not mutate the input', () => {
+test('the order is deterministic for every input order and does not mutate the input', () => {
   const before = ids(MIXED)
   const permutations = [[...MIXED].reverse(), [MIXED[3], MIXED[0], MIXED[5], MIXED[1], MIXED[4], MIXED[2]]]
-  for (const sort of [sortDigestItems, sortByOverviewPriority]) {
-    const expected = ids(sort(MIXED))
-    for (const input of permutations) assert.deepEqual(ids(sort(input)), expected)
-  }
+  const expected = ids(sortDigestItems(MIXED))
+  for (const input of permutations) assert.deepEqual(ids(sortDigestItems(input)), expected)
   assert.deepEqual(ids(MIXED), before)
 })
 
-test('ties on time are broken by source, title and id; missing or invalid dates go last', () => {
+test('within a type, ties on time are broken by source, title and id; missing or invalid dates go last', () => {
   const same = '2026-10-07T08:00:00.000Z'
   const items = [
     item('b', 'podcast', same, { podcastTitle: 'B' }),
-    item('a2', 'youtube', same, { podcastTitle: 'A', episodeTitle: 'Z' }),
-    item('a1', 'website', same, { podcastTitle: 'A', episodeTitle: 'Y' }),
+    item('a2', 'podcast', same, { podcastTitle: 'A', episodeTitle: 'Z' }),
+    item('a1', 'podcast', same, { podcastTitle: 'A', episodeTitle: 'Y' }),
     item('nodate', 'podcast', null),
     item('invalid', 'podcast', 'kein Datum'),
     item('early', undefined, '2026-10-01T00:00:00.000Z'),
+    item('yt', 'youtube', '2026-09-01T00:00:00.000Z'),
   ]
-  assert.deepEqual(ids(sortDigestItems(items)), ['early', 'a1', 'a2', 'b', 'invalid', 'nodate'])
+  assert.deepEqual(ids(sortDigestItems(items)), ['early', 'a1', 'a2', 'b', 'invalid', 'nodate', 'yt'])
   assert.deepEqual(sortDigestItems(undefined), [])
-  assert.deepEqual(sortByOverviewPriority(undefined), [])
+})
+
+test('isPodcastOnly: only podcast (or legacy untyped) items', () => {
+  assert.equal(isPodcastOnly([MIXED[2], item('legacy', undefined, null)]), true)
+  assert.equal(isPodcastOnly(MIXED), false)
+  assert.equal(isPodcastOnly([MIXED[1]]), false)
+  assert.equal(isPodcastOnly([item('s', 'social', null)]), false)
+  assert.equal(isPodcastOnly([]), false)
 })
 
 test('hasSummaryContent: intro or bullets count, empty fallbacks do not', () => {
@@ -85,7 +109,7 @@ test('hasSummaryContent: intro or bullets count, empty fallbacks do not', () => 
   assert.equal(hasSummaryContent(item('a', 'podcast', null, { intro: null, bulletPoints: null, keyTakeaways: undefined })), false)
 })
 
-test('overview prompt is built from the stored summaries and metadata in priority order, never from transcripts', () => {
+test('overview prompt is built from the stored summaries and metadata in digest order, never from transcripts', () => {
   const items = MIXED.map((i) => ({ ...i, transcript: 'GEHEIMES VOLLTRANSKRIPT', reflection: `Einordnung ${i.id}` }))
   const prompt = buildDigestOverviewPrompt(items, { tone: 'concise' })
 
@@ -94,13 +118,21 @@ test('overview prompt is built from the stored summaries and metadata in priorit
   assert.match(prompt, /Inhalte \(6\):/)
   assert.match(prompt, /\[1\] Podcast-Episode \(Priorität 1\) · Quelle: Quelle p1 · 2026-10-06\nTitel: Titel p1\nZusammenfassung: Zusammenfassung p1\.\nHauptthemen: Thema p1\nWichtige Aussagen: Aussage p1\nEinordnung: Einordnung p1/)
   assert.ok(prompt.indexOf('[3] YouTube-Video (Priorität 2) · Quelle: Quelle y1') < prompt.indexOf('[5] Website-Artikel (Priorität 3) · Quelle: Quelle w1'))
-  assert.match(prompt, /Verknüpfe die Inhalte ausdrücklich/)
   assert.match(prompt, /Wiederhole keine einzelnen Stichpunkte/)
-  assert.match(prompt, /statt Zusammenhänge zu konstruieren/)
-  for (const heading of ['Überblick', 'Kernthemen', 'Zusammenhänge und Spannungen', 'Einordnung']) {
-    assert.ok(prompt.includes(`\n## ${heading}\n`), heading)
-  }
+  assert.match(prompt, /Behaupte keine Zusammenhänge, die die genannten Inhalte nicht tragen/)
   assert.ok(prompt.endsWith(buildStyleInstructions({ tone: 'concise' })))
+})
+
+test('Kanban #42: the overview starts with concrete key themes, each ending with the numbers of its items', () => {
+  const prompt = buildDigestOverviewPrompt(MIXED)
+  assert.match(prompt, /Beginne sofort mit den konkreten Kernthemen\. Keine Einleitung, keine allgemeine Lagebeschreibung/)
+  assert.match(prompt, /Beende ihn mit den Nummern der Inhalte, aus denen er stammt, im Format \[1\] oder \[2\]\[5\]/)
+  assert.match(prompt, /Nur Nummern aus der Liste unten/)
+  assert.doesNotMatch(prompt, /\n## Überblick\n/, 'no introductory summary paragraph any more')
+  const structure = prompt.slice(prompt.indexOf('Erstelle folgende Struktur'))
+  assert.match(structure, /^Erstelle folgende Struktur \(exakt diese Überschriften verwenden, nichts davor\):\n\n## Kernthemen\n/)
+  assert.ok(structure.indexOf('## Kernthemen') < structure.indexOf('## Zusammenhänge und Spannungen'))
+  assert.ok(structure.indexOf('## Zusammenhänge und Spannungen') < structure.indexOf('## Einordnung'))
 })
 
 test('overview prompt bounds its input: capped texts and bullets, at most MAX_OVERVIEW_ITEMS items, unsummarised items left out', () => {
@@ -124,30 +156,50 @@ test('overview prompt bounds its input: capped texts and bullets, at most MAX_OV
   assert.ok(capped.length < 40_000, `prompt too long: ${capped.length}`)
 })
 
-const OVERVIEW_ANSWER = `## Überblick
-Heute geht es um Energie und Kommunen.
-Mehrere Quellen sehen Handlungsdruck.
-
-## Kernthemen
-- Wärmewende: „Quelle p1“ und „Quelle w1“ sehen Kommunen in der Pflicht.
-- Finanzierung bleibt offen.
+const OVERVIEW_ANSWER = `## Kernthemen
+- **Wärmewende in Kommunen:** „Quelle p1“ und der Artikel in „Quelle w1“ sehen die Kommunen bis 2028 in der Pflicht [1][5].
+- Finanzierung: Die Förderung reicht laut Video nicht aus [3] [4].
+- Ohne Beleg: Dieser Punkt nennt keine Quelle.
+- Erfunden: Nummer außerhalb der Liste [9].
 
 ## Zusammenhänge und Spannungen
-- „Quelle y1“ widerspricht „Quelle p1“ bei den Kosten.
+- „Quelle y1“ widerspricht „Quelle p1“ bei den Kosten [3, 1].
+- Ohne Nummern.
 
 ## Einordnung
-Insgesamt ein Thema für die nächsten Monate.`
+Die Kosten bleiben die offene Frage [2].`
 
-test('parseDigestOverview extracts all sections and falls back to plain text', () => {
-  assert.deepEqual(parseDigestOverview(OVERVIEW_ANSWER), {
-    summary: 'Heute geht es um Energie und Kommunen. Mehrere Quellen sehen Handlungsdruck.',
-    themes: ['Wärmewende: „Quelle p1“ und „Quelle w1“ sehen Kommunen in der Pflicht.', 'Finanzierung bleibt offen.'],
-    connections: ['„Quelle y1“ widerspricht „Quelle p1“ bei den Kosten.'],
-    reflection: 'Insgesamt ein Thema für die nächsten Monate.',
+const OVERVIEW_ITEMS = () => selectOverviewItems(MIXED)
+
+test('parseDigestOverview links every point to the items its numbers refer to', () => {
+  const items = OVERVIEW_ITEMS()
+  assert.deepEqual(ids(items), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2'])
+  const source = (id, sourceType) => ({ id, sourceType, sourceTitle: `Quelle ${id}`, title: `Titel ${id}`, url: `https://example.com/${id}` })
+
+  assert.deepEqual(parseDigestOverview(OVERVIEW_ANSWER, items), {
+    themes: [
+      { text: 'Wärmewende in Kommunen: „Quelle p1“ und der Artikel in „Quelle w1“ sehen die Kommunen bis 2028 in der Pflicht.', sources: [source('p1', 'podcast'), source('w1', 'website')] },
+      { text: 'Finanzierung: Die Förderung reicht laut Video nicht aus.', sources: [source('y1', 'youtube'), source('y2', 'youtube')] },
+    ],
+    connections: [
+      { text: '„Quelle y1“ widerspricht „Quelle p1“ bei den Kosten.', sources: [source('y1', 'youtube'), source('p1', 'podcast')] },
+    ],
+    reflection: 'Die Kosten bleiben die offene Frage.',
   })
-  assert.deepEqual(parseDigestOverview('## Überblick\nNur das.'), { summary: 'Nur das.', themes: [], connections: [], reflection: null })
-  assert.deepEqual(parseDigestOverview('# Freitext\nOhne Struktur.'), { summary: 'Freitext Ohne Struktur.', themes: [], connections: [], reflection: null })
-  for (const empty of [undefined, null, '', '  \n ', '##']) assert.equal(parseDigestOverview(empty), null)
+})
+
+test('parseDigestOverview drops unsupported points and returns null without any linked key theme', () => {
+  const items = OVERVIEW_ITEMS()
+  // Points without numbers, with numbers outside the list or to items without an http(s) link are dropped.
+  const noLink = [item('a', 'podcast', null, { audioUrl: 'javascript:alert(1)' }), item('b', 'podcast', null, { audioUrl: null })]
+  assert.equal(parseDigestOverview('## Kernthemen\n- Thema [1][2]', noLink), null)
+  assert.equal(parseDigestOverview('## Kernthemen\n- Ohne Nummern.\n- Falsch [0][7]', items), null)
+  // The old answer format (intro paragraph only) or free text gives no overview.
+  assert.equal(parseDigestOverview('## Überblick\nDie Nachrichtenlage ist angespannt.', items), null)
+  assert.equal(parseDigestOverview('# Freitext\nOhne Struktur.', items), null)
+  for (const empty of [undefined, null, '', '  \n ', '##']) assert.equal(parseDigestOverview(empty, items), null)
+  // Duplicate numbers link an item once.
+  assert.deepEqual(parseDigestOverview('## Kernthemen\n- Thema [2][2] [2]', items).themes[0].sources.map((s) => s.id), ['p2'])
 })
 
 function fakeOpenRouter(content) {
@@ -173,6 +225,7 @@ test('generator: one bounded model call for two or more summarised items, with t
   assert.match(options.messages[0].content, /Für Kommunalpolitik/)
   assert.equal(overview.itemCount, 6)
   assert.equal(overview.themes.length, 2)
+  assert.deepEqual(overview.themes[0].sources.map((s) => s.url), ['https://example.com/p1', 'https://example.com/w1'])
 })
 
 test('generator: fewer than two summarised items or an empty answer → no overview', async () => {
@@ -187,13 +240,15 @@ test('generator: fewer than two summarised items or an empty answer → no overv
 
   const silent = createDigestOverviewGenerator({ openrouter: fakeOpenRouter(''), model: 'm' })
   assert.equal(await silent(MIXED), null)
+  const unlinked = createDigestOverviewGenerator({ openrouter: fakeOpenRouter('## Kernthemen\n- Allgemeine Lage ohne Beleg.'), model: 'm' })
+  assert.equal(await unlinked(MIXED), null)
 })
 
 test('overview prompt weighs podcasts first and most, YouTube next, articles mainly as supplement', () => {
   const prompt = buildDigestOverviewPrompt(MIXED)
   const rules = [
     'Gewichtung nach Quelltyp (bestimmt Reihenfolge und Raum, nicht die Wahrheit einer Aussage)',
-    '1. Podcast-Episoden haben die höchste Priorität: Baue Überblick und Kernthemen in erster Linie auf ihnen auf, nenne sie zuerst und gib ihnen den meisten Raum.',
+    '1. Podcast-Episoden haben die höchste Priorität: Baue die Kernthemen in erster Linie auf ihnen auf, nenne sie zuerst und gib ihnen den meisten Raum.',
     '2. YouTube-Videos folgen danach.',
     '3. Website-Artikel dienen vor allem zur Ergänzung, Bestätigung oder Einordnung',
   ]
@@ -213,4 +268,31 @@ test('when the overview input is capped, lower-priority items are left out first
   assert.match(prompt, /\[1\] Podcast-Episode \(Priorität 1\) · Quelle: Quelle late-podcast/)
   assert.doesNotMatch(prompt, /Titel w24/)
   assert.match(prompt, /\(1 weitere Inhalte stehen im Digest/)
+})
+
+test('Kanban #42: splitSentences keeps German abbreviations, ordinals and decimals inside a sentence', () => {
+  assert.deepEqual(splitSentences('Das gilt z. B. für Berlin. Dr. Müller nennt am 3. Oktober 3,5 Prozent! Im Jahr 2025. Warum? „So ist es.“ Ende'), [
+    'Das gilt z. B. für Berlin.',
+    'Dr. Müller nennt am 3. Oktober 3,5 Prozent!',
+    'Im Jahr 2025.',
+    'Warum?',
+    '„So ist es.“',
+    'Ende',
+  ])
+  assert.deepEqual(splitSentences('  '), [])
+  assert.deepEqual(splitSentences(null), [])
+  assert.equal(limitSentences('Eins. Zwei. Drei. Vier. Fünf.', 3), 'Eins. Zwei. Drei.')
+})
+
+test('Kanban #42: websiteSummary shows at most three complete sentences, falling back to the key statements', () => {
+  assert.equal(MAX_WEBSITE_SENTENCES, 3)
+  const long = item('w', 'website', null, { intro: 'Erster Satz. Zweiter Satz, u. a. mit Details.\nDritter Satz! Vierter Satz. Fünfter Satz.' })
+  assert.equal(websiteSummary(long), 'Erster Satz. Zweiter Satz, u. a. mit Details. Dritter Satz!')
+  assert.equal(splitSentences(websiteSummary(long)).length, 3)
+  assert.equal(websiteSummary(item('w', 'website', null, { intro: 'Nur ein Satz.' })), 'Nur ein Satz.')
+  assert.equal(
+    websiteSummary(item('w', 'website', null, { intro: '', keyTakeaways: ['Aussage eins', 'Aussage zwei.'], bulletPoints: ['Thema eins', 'Thema zwei'] })),
+    'Aussage eins. Aussage zwei. Thema eins.'
+  )
+  assert.equal(websiteSummary(item('w', 'website', null, { intro: '', keyTakeaways: [], bulletPoints: [] })), '')
 })

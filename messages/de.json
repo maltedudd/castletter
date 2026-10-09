@@ -286,7 +286,12 @@
     "sectionTips": "Tipps & Methoden",
     "sectionQuotes": "Zitate & Begriffe",
     "sectionSpeakers": "Wer sagt was",
-    "sectionReflection": "Einordnung"
+    "sectionReflection": "Einordnung",
+    "sectionGroupPodcast": "Podcasts",
+    "sectionGroupYoutube": "YouTube",
+    "sectionGroupWebsite": "Website (RSS)",
+    "sectionGroupSocial": "Social",
+    "sectionGroupOther": "Weitere Inhalte"
   },
   "email": {
     "subject": "Deine neuen Podcast-Updates",
