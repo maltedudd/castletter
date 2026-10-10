@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mailIdsOf, socialPostOf, sortMailEpisodes, toArchiveEntry } from '../../src/lib/newsletter/archive.mjs'
+import { groupMailEpisodes, mailIdsOf, socialPostOf, sortMailEpisodes, toArchiveEntry } from '../../src/lib/newsletter/archive.mjs'
 
 const ep = (id, published_at, title, cover = null) => ({ id, published_at, podcast_subscriptions: { title, cover_image_url: cover } })
 
@@ -38,17 +38,26 @@ test('sortMailEpisodes orders oldest first without mutating; mailIdsOf is unique
   assert.deepEqual(mailIdsOf([{ newsletter_mail_id: 'm1' }, { newsletter_mail_id: null }, { newsletter_mail_id: 'm1' }, { newsletter_mail_id: 'm2' }]), ['m1', 'm2'])
 })
 
-// ─── Kanban #39: social posts ────────────────────────────────────────
-
-test('sortMailEpisodes puts social posts after the summaries, like the mail', () => {
-  const list = [
-    { ...ep('s1', '2026-10-06T01:00:00Z', 'Anna'), source_type: 'social' },
-    ep('p1', '2026-10-06T03:00:00Z', 'X'),
-    { ...ep('s2', '2026-10-06T00:30:00Z', 'Anna'), source_type: 'social' },
-    { ...ep('w1', '2026-10-06T02:00:00Z', 'Y'), source_type: 'website' },
+test('Kanban #42: archive follows the digest order – podcasts → YouTube → Website (RSS) → Social, chronological within', () => {
+  const typed = (id, source_type, published_at) => ({ ...ep(id, published_at, `Quelle ${id}`), source_type, title: `Titel ${id}` })
+  const episodes = [
+    typed('w1', 'website', '2026-10-06T01:00:00Z'),
+    typed('s1', 'social', '2026-10-06T00:30:00Z'),
+    typed('y1', 'youtube', '2026-10-06T02:00:00Z'),
+    typed('p2', 'podcast', '2026-10-06T05:00:00Z'),
+    typed('p1', null, '2026-10-06T04:00:00Z'),
+    typed('x1', 'newsletter', '2026-10-06T00:00:00Z'),
   ]
-  assert.deepEqual(sortMailEpisodes(list).map((e) => e.id), ['w1', 'p1', 's2', 's1'])
+  assert.deepEqual(sortMailEpisodes(episodes).map((e) => e.id), ['p1', 'p2', 'y1', 'w1', 's1', 'x1'])
+  assert.deepEqual(groupMailEpisodes(episodes).map((g) => [g.type, g.episodes.map((e) => e.id)]), [
+    ['podcast', ['p1', 'p2']], ['youtube', ['y1']], ['website', ['w1']], ['social', ['s1']], ['other', ['x1']],
+  ])
+  assert.deepEqual(groupMailEpisodes(undefined), [])
+  assert.deepEqual(toArchiveEntry({ id: 'm', mode: 'daily', subject: 's', sent_at: 'x', episodes }).sources,
+    ['Quelle p1', 'Quelle p2', 'Quelle y1', 'Quelle w1', 'Quelle s1', 'Quelle x1'])
 })
+
+// ─── Kanban #39: social posts ────────────────────────────────────────
 
 test('socialPostOf re-sanitises the stored post and keeps only http(s) media; null for other types', () => {
   const post = socialPostOf({

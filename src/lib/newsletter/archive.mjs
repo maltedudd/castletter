@@ -1,6 +1,7 @@
 // Newsletter archive: one entry per sent mail (`newsletter_mails`) with the episodes it held.
 // Pure mapping of the Supabase rows, so list and detail page share it and it runs under node:test.
 
+import { compareDigestItems, DIGEST_SECTION_ORDER, digestSourceType } from './digest.mjs'
 import { safeHttpUrl, sanitizeSocialHtml } from '../social/sanitize.mjs'
 
 export const ARCHIVE_PAGE_SIZE = 20
@@ -13,14 +14,33 @@ function one(ref) {
 
 const isSocial = (episode) => episode?.source_type === 'social'
 
+function digestKey(episode) {
+  return {
+    id: episode.id,
+    sourceType: episode.source_type ?? 'podcast',
+    publishedAt: episode.published_at ?? null,
+    podcastTitle: one(episode.podcast_subscriptions)?.title,
+    episodeTitle: episode.title,
+  }
+}
+
 /**
- * Episodes of a mail in the order they appeared in it: summaries oldest first, then the social
- * posts (their own section in the mail), oldest first.
+ * Episodes of a mail in the order of the digest: podcasts, YouTube, Website (RSS), Social,
+ * each oldest first (see compareDigestItems). Returns a new array.
  */
 export function sortMailEpisodes(episodes) {
-  return [...(episodes ?? [])].sort((a, b) =>
-    Number(isSocial(a)) - Number(isSocial(b)) || String(a.published_at).localeCompare(String(b.published_at))
-  )
+  return [...(episodes ?? [])].sort((a, b) => compareDigestItems(digestKey(a), digestKey(b)))
+}
+
+/**
+ * Episodes of a mail grouped like the digest sections: `[{ type, episodes }]` in the order
+ * podcast, youtube, website, social, other; empty sections are left out.
+ */
+export function groupMailEpisodes(episodes) {
+  const sorted = sortMailEpisodes(episodes)
+  return DIGEST_SECTION_ORDER
+    .map((type) => ({ type, episodes: sorted.filter((episode) => digestSourceType(digestKey(episode)) === type) }))
+    .filter((group) => group.episodes.length > 0)
 }
 
 /**

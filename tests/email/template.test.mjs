@@ -72,62 +72,149 @@ test('website articles link to the article instead of "listen" and get article w
   assert.match(mixed, /→ Artikel lesen: https:\/\/blog\.example\.com\/artikel/)
 })
 
-// ─── Kanban #38: overview ────────────────────────────────────────────
+// ─── Kanban #38/#42: overview, sections, website length ─────────────
 
 const typed = (id, sourceType, publishedAt) => ({
   ...item(`Quelle ${id}`, `Titel ${id}`),
   id,
   sourceType,
   publishedAt,
-  intro: `Intro ${id}`,
+  intro: `Intro ${id}.`,
+  audioUrl: `https://example.com/${id}`,
 })
+// Given in digest order (the delivery sorts, see sortDigestItems); the template groups.
 const DIGEST = [
-  typed('w', 'website', '2026-10-07T01:00:00.000Z'),
-  typed('y', 'youtube', '2026-10-07T02:00:00.000Z'),
   typed('p', 'podcast', '2026-10-07T03:00:00.000Z'),
+  typed('y', 'youtube', '2026-10-07T02:00:00.000Z'),
+  typed('w', 'website', '2026-10-07T01:00:00.000Z'),
 ]
+const src = (id, sourceType) => ({ id, sourceType, sourceTitle: `Quelle ${id}`, title: `Titel ${id}`, url: `https://example.com/${id}?a=1&b=<2>` })
 const OVERVIEW = {
-  summary: 'Quer durch alle <Quellen>.',
-  themes: ['Energie: „Quelle p“ und „Quelle w“'],
-  connections: ['„Quelle y“ widerspricht „Quelle p“'],
-  reflection: 'Bleibt spannend.',
+  themes: [
+    { text: 'Wärmewende: Kommunen müssen bis 2028 planen <jetzt>.', sources: [src('p', 'podcast'), src('w', 'website')] },
+    { text: 'Ohne Quelle wird nicht gezeigt.', sources: [] },
+  ],
+  connections: [{ text: '„Quelle y“ widerspricht „Quelle p“ bei den Kosten.', sources: [src('y', 'youtube'), src('p', 'podcast')] }],
+  reflection: 'Die Kosten bleiben offen.',
   itemCount: 3,
 }
 
-test('digest shows the highlighted overview first, then the complete summaries in the given (chronological) order', () => {
-  const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
-  const order = ['<!-- Overview -->', 'Das Wichtigste aus 3 Inhalten', 'Quer durch alle &lt;Quellen&gt;.', 'Kernthemen', 'Zusammenhänge &amp; Spannungen', 'Bleibt spannend.',
-    'Podcasts sind am stärksten gewichtet', 'Intro w', 'Intro y', 'Intro p']
+function assertInOrder(text, markers, label) {
   let last = -1
-  for (const marker of order) {
-    const index = html.indexOf(marker)
-    assert.ok(index > last, `${marker} out of order`)
+  for (const marker of markers) {
+    const index = text.indexOf(marker)
+    assert.ok(index > last, `${marker} out of order (${label})`)
     last = index
   }
+}
+
+test('digest shows the overview first – starting with the key themes – then the sections podcasts → YouTube → Website (RSS)', () => {
+  const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
+  assertInOrder(html, ['<!-- Overview -->', 'Das Wichtigste aus 3 Inhalten', 'Kernthemen', 'Wärmewende: Kommunen müssen bis 2028 planen &lt;jetzt&gt;.',
+    'Zusammenhänge &amp; Spannungen', 'Die Kosten bleiben offen.', 'Jeder Punkt verlinkt die Beiträge',
+    '<!-- Section: Podcasts -->', 'Intro p.', '<!-- Section: YouTube -->', 'Intro y.', '<!-- Section: Website (RSS) -->', 'Intro w.'], 'html')
   assert.match(html, /border-left: 6px solid #9FC131/)
-  assert.match(html, /KI-Überblick auf Basis der 3 Zusammenfassungen unten/)
-  assert.doesNotMatch(html, /<Quellen>/)
-  assert.doesNotMatch(html, /Source type group|Podcasts \(1\)/, 'no grouping by source type')
+  assert.doesNotMatch(html, /<jetzt>/)
+  assert.doesNotMatch(html, /Ohne Quelle wird nicht gezeigt/, 'points without a linked source are not shown')
+  // Nothing between the overview title and the first key theme: no introductory paragraph.
+  const overview = html.slice(html.indexOf('Das Wichtigste aus 3 Inhalten'), html.indexOf('Kernthemen'))
+  assert.doesNotMatch(overview, /<p /)
 
   const text = generateEmailPlainText(DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
-  const textOrder = ['ÜBERBLICK – Das Wichtigste aus 3 Inhalten', 'Quer durch alle <Quellen>.', 'KERNTHEMEN:', 'ZUSAMMENHÄNGE & SPANNUNGEN:', 'EINORDNUNG: Bleibt spannend.',
-    'Intro w', 'Intro y', 'Intro p']
-  last = -1
-  for (const marker of textOrder) {
-    const index = text.indexOf(marker)
-    assert.ok(index > last, `${marker} out of order (text)`)
-    last = index
-  }
-  assert.doesNotMatch(text, /▌/)
+  assertInOrder(text, ['ÜBERBLICK – Das Wichtigste aus 3 Inhalten\n\nKERNTHEMEN:', '  • Wärmewende: Kommunen müssen bis 2028 planen <jetzt>.',
+    'ZUSAMMENHÄNGE & SPANNUNGEN:', 'EINORDNUNG: Die Kosten bleiben offen.',
+    '▬▬ PODCASTS ▬▬', 'Intro p.', '▬▬ YOUTUBE ▬▬', 'Intro y.', '▬▬ WEBSITE (RSS) ▬▬', 'Intro w.'], 'text')
 })
 
-test('overview in English', () => {
+test('Kanban #42: every key theme links its original items directly, with meaningful link texts', () => {
+  const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
+  const theme = html.slice(html.indexOf('Wärmewende:'), html.indexOf('</li>', html.indexOf('Wärmewende:')))
+  assert.match(theme, /Quellen: <a href="https:\/\/example\.com\/p\?a=1&amp;b=&lt;2&gt;"[^>]*>Quelle p – Titel p<\/a> · <a href="https:\/\/example\.com\/w\?a=1&amp;b=&lt;2&gt;"[^>]*>Quelle w – Titel w<\/a>/)
+  const connection = html.slice(html.indexOf('„Quelle y“ widerspricht'), html.indexOf('</li>', html.indexOf('„Quelle y“ widerspricht')))
+  assert.match(connection, />Quelle y – Titel y<\/a> · <a [^>]*>Quelle p – Titel p<\/a>/)
+
+  const text = generateEmailPlainText(DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
+  assert.ok(text.includes('  • Wärmewende: Kommunen müssen bis 2028 planen <jetzt>.\n    → Quelle p – Titel p: https://example.com/p?a=1&b=<2>\n    → Quelle w – Titel w: https://example.com/w?a=1&b=<2>\n'))
+  assert.ok(text.includes('    → Quelle y – Titel y: https://example.com/y?a=1&b=<2>\n    → Quelle p – Titel p: https://example.com/p?a=1&b=<2>'))
+})
+
+test('overview and sections in English', () => {
   const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'en', 'daily', OVERVIEW)
   assert.match(html, /The essentials from 3 items/)
   assert.match(html, /Key themes/)
+  assert.match(html, /Sources: <a /)
   assert.match(html, /Connections &amp; tensions/)
-  assert.match(html, /podcasts weigh most, then YouTube, then Website \(RSS\)/)
-  assert.match(generateEmailPlainText(DIGEST, 'https://s', 'en', 'daily', OVERVIEW), /OVERVIEW – The essentials from 3 items/)
+  assert.match(html, /Every point links the items it is drawn from/)
+  assert.match(html, /<!-- Section: Website \(RSS\) -->/)
+  const text = generateEmailPlainText(DIGEST, 'https://s', 'en', 'daily', OVERVIEW)
+  assert.match(text, /OVERVIEW – The essentials from 3 items/)
+  assert.match(text, /▬▬ PODCASTS ▬▬/)
+})
+
+test('Kanban #42: a mixed digest has source-neutral wording; a podcast-only digest keeps the podcast wording', () => {
+  for (const [locale, title, tagline, body] of [
+    ['de', 'Dein Castletter', 'Dein täglicher Überblick über deine Quellen', 'hier ist das Neue aus deinen Quellen:'],
+    ['en', 'Your Castletter', 'Your daily overview of your sources', 'here is what is new from your sources:'],
+  ]) {
+    const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', locale, 'daily')
+    assert.ok(html.includes(`<title>${title}</title>`), locale)
+    assert.ok(html.includes(tagline), locale)
+    assert.ok(html.includes(body), locale)
+    assert.doesNotMatch(html.slice(0, html.indexOf('<!-- Section')), /Podcast-(Highlights|Zusammenfassungen|Updates)|podcast (highlights|summaries|updates)/)
+    assert.ok(generateEmailPlainText(DIGEST, 'https://s', locale, 'daily').startsWith(`${title}\n`), locale)
+  }
+  const podcasts = [typed('p1', 'podcast', null), typed('p2', undefined, null)]
+  assert.match(generateEmailHTML('m@x.de', podcasts, 'https://s', 'de', 'daily'), /<title>Deine neuen Podcast-Updates<\/title>/)
+})
+
+test('Kanban #42: Website (RSS) articles show title, link and at most three sentences; podcasts and videos stay complete', () => {
+  const long = {
+    ...typed('w', 'website', null),
+    intro: 'Erster Satz. Zweiter Satz mit z. B. Details. Dritter Satz. Vierter Satz darf nicht erscheinen. Fünfter auch nicht.',
+    bulletPoints: ['ARTIKEL-STICHPUNKT'],
+    keyTakeaways: ['ARTIKEL-AUSSAGE'],
+    reflection: 'ARTIKEL-EINORDNUNG',
+  }
+  const pod = { ...typed('p', 'podcast', null), intro: 'P1. P2. P3. P4. P5.', bulletPoints: ['POD-THEMA'], keyTakeaways: ['POD-AUSSAGE'], reflection: 'POD-EINORDNUNG' }
+  const yt = { ...typed('y', 'youtube', null), intro: 'Y1. Y2. Y3. Y4.', bulletPoints: ['YT-THEMA'], actionItems: ['YT-TIPP'] }
+
+  for (const output of [
+    generateEmailHTML('m@x.de', [pod, yt, long], 'https://s', 'de', 'daily'),
+    generateEmailPlainText([pod, yt, long], 'https://s', 'de', 'daily'),
+  ]) {
+    assert.ok(output.includes('Erster Satz. Zweiter Satz mit z. B. Details. Dritter Satz.'))
+    assert.doesNotMatch(output, /Vierter Satz|Fünfter|ARTIKEL-STICHPUNKT|ARTIKEL-AUSSAGE|ARTIKEL-EINORDNUNG/)
+    for (const kept of ['P1. P2. P3. P4. P5.', 'POD-THEMA', 'POD-AUSSAGE', 'POD-EINORDNUNG', 'Y1. Y2. Y3. Y4.', 'YT-THEMA', 'YT-TIPP']) {
+      assert.ok(output.includes(kept), kept)
+    }
+  }
+
+  const html = generateEmailHTML('m@x.de', [pod, long], 'https://s', 'de', 'daily')
+  const article = html.slice(html.indexOf('<!-- Section: Website (RSS) -->'))
+  assertInOrder(article, ['Quelle w', '<a href="https://example.com/w"', 'Titel w</a>', 'Erster Satz.', 'Artikel lesen'], 'website html')
+  const text = generateEmailPlainText([pod, long], 'https://s', 'de', 'daily')
+  assert.ok(text.includes('Quelle w\nTitel w\n→ Artikel lesen: https://example.com/w\nErster Satz. Zweiter Satz mit z. B. Details. Dritter Satz.'))
+
+  // Also in an immediate mail.
+  const immediate = generateEmailPlainText([long], 'https://s', 'de', 'immediate')
+  assert.doesNotMatch(immediate, /Vierter Satz|ARTIKEL-STICHPUNKT/)
+  assert.doesNotMatch(immediate, /▬▬/, 'an immediate mail has no section heading')
+})
+
+test('Kanban #42: Social posts keep their own section and full text, never shortened like websites', () => {
+  const social = {
+    ...typed('s', 'social', null),
+    intro: '',
+    bulletPoints: [],
+    social: { html: '<p>Post Satz eins. Satz zwei. Satz drei. Satz vier. Satz fünf.</p>', spoiler: null, media: [] },
+  }
+  const html = generateEmailHTML('m@x.de', [social, DIGEST[2]], 'https://s', 'de', 'daily')
+  assertInOrder(html, ['<!-- Section: Website (RSS) -->', 'Intro w.', '<!-- Section: Social -->', 'Social-Beiträge', 'Satz vier. Satz fünf.'], 'social html')
+  const text = generateEmailPlainText([social, DIGEST[2]], 'https://s', 'en', 'daily')
+  assertInOrder(text, ['▬▬ WEBSITE (RSS) ▬▬', 'Intro w.', '▬▬ SOCIAL POSTS ▬▬', 'Satz vier. Satz fünf.'], 'social text')
+  // Unknown types land in their own last section.
+  const other = generateEmailPlainText([typed('x', 'newsletter', null), DIGEST[0]], 'https://s', 'de', 'daily')
+  assertInOrder(other, ['▬▬ PODCASTS ▬▬', '▬▬ WEITERE INHALTE ▬▬', 'Intro x.'], 'other')
 })
 
 test('a single item, an immediate mail or an empty overview shows no overview block', () => {
@@ -138,7 +225,7 @@ test('a single item, an immediate mail or an empty overview shows no overview bl
   assert.doesNotMatch(generateEmailHTML('m@x.de', single, 'https://s', 'de', 'immediate', OVERVIEW), /<!-- Overview -->/)
   assert.doesNotMatch(generateEmailPlainText(single, 'https://s', 'de', 'immediate', OVERVIEW), /ÜBERBLICK/)
 
-  const empty = { summary: '  ', themes: [], connections: ['x'], reflection: null }
+  const empty = { themes: [{ text: 'Ohne Link', sources: [] }], connections: [{ text: 'x', sources: [src('p', 'podcast')] }], reflection: null }
   assert.doesNotMatch(generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', empty), /<!-- Overview -->/)
 })
 
@@ -219,15 +306,15 @@ test('media and link previews are listed as links, never loaded as images', () =
 })
 
 test('daily digest: summaries first, then social posts in their own section', () => {
-  const items = [post('s1', { publishedAt: '2026-10-07T00:30:00.000Z' }), ...DIGEST]
+  const items = [...DIGEST, post('s1', { publishedAt: '2026-10-07T00:30:00.000Z' })]
   const html = generateEmailHTML('m@x.de', items, 'https://s', 'de', 'daily', OVERVIEW)
-  const order = ['<!-- Overview -->', 'Intro w', 'Intro y', 'Intro p', 'Social-Beiträge', 'Originaltext s1']
+  const order = ['<!-- Overview -->', 'Intro p', 'Intro y', 'Intro w', 'Social-Beiträge', 'Originaltext s1']
   const positions = order.map((part) => html.indexOf(part))
   assert.ok(positions.every((p) => p >= 0), JSON.stringify(positions))
   assert.deepEqual([...positions].sort((a, b) => a - b), positions)
 
   const text = generateEmailPlainText(items, 'https://s', 'en', 'daily')
-  assert.ok(text.indexOf('Intro p') < text.indexOf('SOCIAL POSTS'))
+  assert.ok(text.indexOf('Intro w') < text.indexOf('SOCIAL POSTS'))
   assert.ok(text.indexOf('SOCIAL POSTS') < text.indexOf('Originaltext s1'))
 
   // Without social posts there is no social section.

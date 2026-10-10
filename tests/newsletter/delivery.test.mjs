@@ -77,11 +77,30 @@ test('the daily digest is due in the user\'s UTC hour only', () => {
 
 test('subject names podcast and episode for an immediate mail, counts episodes for a digest', () => {
   const one = [{ podcastTitle: 'Lage der Nation', episodeTitle: 'Folge 1' }]
-  const two = [...one, { podcastTitle: 'Lage der Nation', episodeTitle: 'Folge 2' }]
+  const two = [...one, { podcastTitle: 'Lage der Nation', episodeTitle: 'Folge 2', sourceType: 'podcast' }]
 
   assert.equal(buildNewsletterSubject(one, 'immediate'), 'Lage der Nation: Folge 1')
   assert.equal(buildNewsletterSubject(one, 'daily'), 'Deine neuen Podcast-Updates (1 Episode)')
   assert.equal(buildNewsletterSubject(two, 'daily'), 'Deine neuen Podcast-Updates (2 Episoden)')
+})
+
+test('Kanban #42: a digest with anything but podcasts gets a source-neutral subject', () => {
+  const pod = { podcastTitle: 'Lage der Nation', episodeTitle: 'Folge 1', sourceType: 'podcast' }
+  const yt = { podcastTitle: 'Kanal', episodeTitle: 'Video', sourceType: 'youtube' }
+  const web = { podcastTitle: 'tagesschau.de', episodeTitle: 'Artikel', sourceType: 'website' }
+  const social = { podcastTitle: '@a@b.social', episodeTitle: 'Post', sourceType: 'social' }
+
+  assert.equal(buildNewsletterSubject([pod, yt, web], 'daily'), 'Dein Castletter: 3 neue Inhalte')
+  assert.equal(buildNewsletterSubject([pod, web], 'daily'), 'Dein Castletter: 2 neue Inhalte')
+  assert.equal(buildNewsletterSubject([yt], 'daily'), 'Dein Castletter: 1 neuer Inhalt')
+  assert.equal(buildNewsletterSubject([web, web], 'daily'), 'Dein Castletter: 2 neue Inhalte')
+  assert.equal(buildNewsletterSubject([pod, social], 'daily'), 'Dein Castletter: 2 neue Inhalte')
+  for (const items of [[pod, yt], [web, web], [pod, social]]) {
+    assert.doesNotMatch(buildNewsletterSubject(items, 'daily'), /Podcast|Episode/)
+  }
+  // Several immediate items fall back to the digest subject, with the same rule.
+  assert.equal(buildNewsletterSubject([pod, yt], 'immediate'), 'Dein Castletter: 2 neue Inhalte')
+  assert.equal(buildNewsletterSubject([web], 'immediate'), 'tagesschau.de: Artikel')
 })
 
 test('daily podcasts: one digest in the delivery hour, then marked sent', async () => {
@@ -295,18 +314,19 @@ const MIXED_EPISODES = () => [
   episode('pod-early', { subscription_id: 'sub-pod', source_type: 'podcast', published_at: '2026-10-03T03:00:00.000Z' }),
 ]
 
-test('daily digest items stay chronological across source types', async () => {
+test('daily digest items follow podcasts → YouTube → Website (RSS), chronological within each', async () => {
   const db = typedDb(MIXED_EPISODES())
   const { mails, sendEmail } = recordingMailer()
 
   await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true })
 
   assert.deepEqual(mails[0].items.map((i) => [i.id, i.sourceType, i.publishedAt]), [
-    ['web', 'website', '2026-10-03T01:00:00.000Z'],
-    ['yt', 'youtube', '2026-10-03T02:00:00.000Z'],
     ['pod-early', 'podcast', '2026-10-03T03:00:00.000Z'],
     ['pod-late', 'podcast', '2026-10-03T05:00:00.000Z'],
+    ['yt', 'youtube', '2026-10-03T02:00:00.000Z'],
+    ['web', 'website', '2026-10-03T01:00:00.000Z'],
   ])
+  assert.equal(mails[0].subject, 'Dein Castletter: 4 neue Inhalte')
   assert.equal(mails[0].overview, null, 'no overview without a generator')
 })
 
@@ -314,15 +334,15 @@ test('daily digest with two or more items gets the overview in the user\'s style
   const db = typedDb(MIXED_EPISODES())
   const { mails, sendEmail } = recordingMailer()
   const calls = []
-  const overview = { summary: 'Querschnitt.', themes: ['Energie'], connections: [], reflection: null, itemCount: 4 }
+  const overview = { themes: [{ text: 'Energie', sources: [] }], connections: [], reflection: null, itemCount: 4 }
   const summarizeDigest = async (items, style) => { calls.push({ ids: items.map((i) => i.id), style }); return overview }
   const user = { ...USER, summary_tone: 'analytical', summary_prompt_addition: ' Fokus Kommunen ' }
 
   await sendNewsletterToUser({ supabase: db, user, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true, summarizeDigest })
 
-  assert.deepEqual(calls, [{ ids: ['web', 'yt', 'pod-early', 'pod-late'], style: { tone: 'analytical', promptAddition: 'Fokus Kommunen' } }])
+  assert.deepEqual(calls, [{ ids: ['pod-early', 'pod-late', 'yt', 'web'], style: { tone: 'analytical', promptAddition: 'Fokus Kommunen' } }])
   assert.deepEqual(mails[0].overview, overview)
-  assert.deepEqual(mails[0].items.map((i) => i.id), ['web', 'yt', 'pod-early', 'pod-late'], 'single summaries stay complete')
+  assert.deepEqual(mails[0].items.map((i) => i.id), ['pod-early', 'pod-late', 'yt', 'web'], 'single summaries stay complete')
 })
 
 test('a single digest item and immediate mails get no overview (and no model call)', async () => {
@@ -332,7 +352,7 @@ test('a single digest item and immediate mails get no overview (and no model cal
   ])
   const { mails, sendEmail } = recordingMailer()
   let calls = 0
-  const summarizeDigest = async () => { calls++; return { summary: 'x', themes: [], connections: [], reflection: null } }
+  const summarizeDigest = async () => { calls++; return { themes: [], connections: [], reflection: null } }
 
   await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true, summarizeDigest })
 
@@ -489,9 +509,10 @@ test('daily social source: posts go into the digest unchanged, next to summaries
   const result = await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true })
   assert.deepEqual(result, { mailsSent: 1, episodesSent: 2 })
   assert.equal(mails[0].mode, 'daily')
-  assert.deepEqual(mails[0].items.map((i) => [i.id, i.sourceType]), [['s1', 'social'], ['a', 'podcast']])
-  assert.equal(mails[0].items[0].social.html, '<p>Text s1</p>')
-  assert.equal(mails[0].items[1].social, undefined)
+  // Kanban #42: fixed section order – podcasts first, social posts last.
+  assert.deepEqual(mails[0].items.map((i) => [i.id, i.sourceType]), [['a', 'podcast'], ['s1', 'social']])
+  assert.equal(mails[0].items[1].social.html, '<p>Text s1</p>')
+  assert.equal(mails[0].items[0].social, undefined)
 })
 
 test('a non-social episode without stored newsletter is still never mailed', async () => {

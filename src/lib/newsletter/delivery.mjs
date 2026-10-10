@@ -3,7 +3,7 @@
 // subscription (`podcast_subscriptions.delivery_mode`). Dependency-free: the Supabase client and the mail sender
 // are injected so claim/release behaviour can be tested without a database or Resend.
 
-import { MIN_OVERVIEW_ITEMS, sortDigestItems } from './digest.mjs'
+import { isPodcastOnly, MIN_OVERVIEW_ITEMS, sortDigestItems } from './digest.mjs'
 import { normalizeSummaryStyle } from './summary-style.mjs'
 
 export const DELIVERY_MODES = ['daily', 'immediate']
@@ -32,7 +32,11 @@ export function buildNewsletterSubject(items, mode) {
   if (normalizeDeliveryMode(mode) === 'immediate' && items.length === 1) {
     return `${items[0].podcastTitle}: ${items[0].episodeTitle}`
   }
-  return `Deine neuen Podcast-Updates (${items.length} ${items.length === 1 ? 'Episode' : 'Episoden'})`
+  // Only a pure podcast digest is named after podcasts; any other mix is source-neutral.
+  if (isPodcastOnly(items)) {
+    return `Deine neuen Podcast-Updates (${items.length} ${items.length === 1 ? 'Episode' : 'Episoden'})`
+  }
+  return `Dein Castletter: ${items.length} ${items.length === 1 ? 'neuer Inhalt' : 'neue Inhalte'}`
 }
 
 /**
@@ -151,8 +155,8 @@ function toNewsletterItem(episode, podcastTitle) {
  * claimed are mailed; a failed send releases its claim and rethrows.
  *
  * `sendEmail({ to, subject, items, mode, overview })` must throw if the mail was not accepted;
- * `mode` ('immediate' | 'daily') selects the mail's introduction text. Items are in
- * chronological order (see sortDigestItems in digest.mjs).
+ * `mode` ('immediate' | 'daily') selects the mail's introduction text. Items are in digest
+ * order: podcasts, YouTube, Website (RSS), Social, each chronological (see sortDigestItems).
  *
  * `summarizeDigest(items, style)` (optional) creates the overview of a daily digest with at
  * least MIN_OVERVIEW_ITEMS items in the user's style (`user.summary_tone`,

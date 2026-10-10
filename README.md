@@ -7,7 +7,7 @@ A newsletter app that automatically summarizes new podcast episodes, YouTube vid
 1. Add sources: a podcast via RSS feed, a public YouTube channel (channel ID, URL or @handle) or a website via its public RSS/Atom feed („Website (RSS)“)
 2. Castletter detects new episodes, uploads and articles automatically
 3. Episodes get transcribed and summarized by AI; website articles are summarized from their complete public text (from the feed or the linked article page) – paywalled or teaser-only articles are marked and skipped, never summarized from a teaser
-4. You receive a newsletter with the summary at your preferred time. With several items, the daily newsletter opens with an integrated overview across all sources (built from the summaries, not the transcripts), which weighs podcasts most, then YouTube, then Website (RSS); the complete summaries follow in chronological order
+4. You receive a newsletter with the summary at your preferred time. With several items, the daily newsletter opens with an integrated overview of concrete key themes, each linking the items it is drawn from (built from the summaries, not the transcripts; podcasts weigh most, then YouTube, then Website (RSS)). The items follow in sections – podcasts, YouTube, Website (RSS), Social – each in publication order; website articles are shown in at most three sentences
 5. In the settings you choose the tone of the summaries (factual, concise, analytical, warm) and an optional short addition (max. 500 characters) that refines style and perspective – it cannot override the rules on truthfulness, sources and safety
 
 ## Tech Stack

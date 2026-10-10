@@ -35,31 +35,6 @@ export function getPodcastRef(episode) {
   return (Array.isArray(ref) ? ref[0] : ref) ?? undefined
 }
 
-// Website articles are summarised in proportion to their length: about a quarter of the
-// article, never less than this and never more than that (a podcast hour gets no budget).
-const ARTICLE_SUMMARY_RATIO = 0.25
-const MIN_ARTICLE_SUMMARY_WORDS = 60
-const MAX_ARTICLE_SUMMARY_WORDS = 500
-
-// Per tier: sentences of the summary, bullet ranges and whether optional sections may appear.
-const ARTICLE_TIERS = {
-  short: { sentences: '2–3', topics: '2–3', takeaways: '2–3', optionalBullets: 0, reflection: false },
-  medium: { sentences: 'max. 4', topics: '2–4', takeaways: '3–5', optionalBullets: 2, reflection: false },
-  long: { sentences: 'max. 5', topics: '3–5', takeaways: '4–8', optionalBullets: 4, reflection: true },
-}
-
-function roundToTen(value) {
-  return Math.round(value / 10) * 10
-}
-
-/** Word budget for the summary of a website article, and the article's length tier. */
-export function buildArticleSummaryBudget(text) {
-  const articleWords = String(text ?? '').trim().split(/\s+/).filter(Boolean).length
-  const targetWords = Math.min(MAX_ARTICLE_SUMMARY_WORDS, Math.max(MIN_ARTICLE_SUMMARY_WORDS, roundToTen(articleWords * ARTICLE_SUMMARY_RATIO)))
-  const tier = articleWords < 400 ? 'short' : articleWords < 1200 ? 'medium' : 'long'
-  return { articleWords, targetWords, tier }
-}
-
 function truncateText(text, label) {
   return text.length > MAX_TRANSCRIPT_CHARS
     ? text.slice(0, MAX_TRANSCRIPT_CHARS) + `\n\n[${label} gekürzt]`
@@ -68,8 +43,8 @@ function truncateText(text, label) {
 
 /**
  * Prompt for the newsletter of one item. Podcast episodes and YouTube videos share the
- * podcast prompt; website articles get a prompt whose length scales with the article. The
- * section headings are identical, so parsing, review and delivery stay the same. `style`
+ * podcast prompt; website articles get a short prompt with the summary section only, so
+ * parsing, review and delivery stay the same. `style`
  * (the user's tone and prompt addition, see summary-style.mjs) is appended to both.
  */
 export function buildNewsletterPrompt({ podcastTitle, episodeTitle, transcript: fullTranscript, sourceType = 'podcast', style }) {
@@ -116,34 +91,12 @@ Erstelle folgende Struktur (exakt diese Überschriften verwenden):
 Mindestens 3 Bullet Points pro Sektion. Optionale Sektionen nur aufnehmen, wenn der Inhalt sie hergibt.`
 }
 
+// Website (RSS) articles get a short summary only (Kanban #42): the digest shows them in at most
+// three sentences under title and link; podcasts and videos keep the detailed structure.
 function buildArticlePrompt({ sourceTitle, articleTitle, text: fullText }) {
   const text = truncateText(fullText, 'Text')
-  const { articleWords, targetWords, tier } = buildArticleSummaryBudget(fullText)
-  const limits = ARTICLE_TIERS[tier]
 
-  const optionalSections = limits.optionalBullets > 0
-    ? `
-
-## Tipps und Methoden
-- [Konkrete Tipps oder Handlungsempfehlungen aus dem Artikel – höchstens ${limits.optionalBullets} Stichpunkte, nur wenn der Artikel welche enthält. Sonst diese Sektion weglassen.]
-
-## Zitate und Begriffe
-- [Zentrale Zitate oder Begriffe – höchstens ${limits.optionalBullets} Stichpunkte, nur wenn sie für das Verständnis wichtig sind. Sonst diese Sektion weglassen.]
-
-## Wer sagt was
-- [Nur wenn mehrere Personen mit unterschiedlichen Positionen zu Wort kommen: wer vertritt was – höchstens ${limits.optionalBullets} Stichpunkte. Sonst diese Sektion weglassen.]`
-    : ''
-  const reflection = limits.reflection
-    ? `
-
-## Einordnung
-[Kontext oder kritische Einordnung in 1–2 Sätzen, nur wenn sie dem Leser wirklich hilft. Sonst diese Sektion weglassen.]`
-    : ''
-  const sectionRule = limits.optionalBullets > 0
-    ? 'Optionale Abschnitte nur aufnehmen, wenn der Artikel sie hergibt; im Zweifel weglassen.'
-    : 'Nur die Abschnitte „Zusammenfassung“, „Hauptthemen“ und „Wichtige Aussagen und Erkenntnisse“ ausgeben – keine weiteren.'
-
-  return `Du fasst einen Artikel einer Website zusammen. Dein Ziel ist, mir das Wissen aus dem Artikel so zu vermitteln, als hättest du ihn für mich gelesen. Sprich mich direkt an, verwende klare Sprache, und verzichte auf Floskeln. Stütze dich ausschließlich auf den folgenden Text und ergänze nichts, was nicht darin steht.
+  return `Du fasst einen Artikel einer Website zusammen. Dein Ziel ist, mir in wenigen Sätzen zu sagen, was im Artikel steht, als hättest du ihn für mich gelesen. Verwende klare Sprache und verzichte auf Floskeln. Stütze dich ausschließlich auf den folgenden Text und ergänze nichts, was nicht darin steht.
 
 Website: ${sourceTitle}
 Artikel: ${articleTitle}
@@ -151,20 +104,12 @@ Artikel: ${articleTitle}
 Text:
 ${text}
 
-Länge: Der Artikel hat etwa ${roundToTen(articleWords)} Wörter. Die gesamte Zusammenfassung darf höchstens etwa ${targetWords} Wörter umfassen – sie muss deutlich kürzer sein als der Artikel. Wiederhole nichts zwischen den Abschnitten; jeder Stichpunkt höchstens ein Satz.
-
-Erstelle folgende Struktur (exakt diese Überschriften verwenden):
+Erstelle folgende Struktur (exakt diese Überschrift verwenden):
 
 ## Zusammenfassung
-[Das Wichtigste in ${limits.sentences} Sätzen]
+[2–3 präzise, vollständige Sätze: die konkrete Kernaussage des Artikels mit den wichtigsten Fakten – wer, was, welche Zahl oder Entscheidung. Keine Einleitung wie „Der Artikel behandelt …“.]
 
-## Hauptthemen
-- [${limits.topics} Stichpunkte: die Themen des Artikels]
-
-## Wichtige Aussagen und Erkenntnisse
-- [${limits.takeaways} Stichpunkte: die zentralen Fakten und Aussagen]${optionalSections}${reflection}
-
-${sectionRule}`
+Nur den Abschnitt „Zusammenfassung“ ausgeben – keine Stichpunkte, keine weiteren Abschnitte. Höchstens drei Sätze.`
 }
 
 /**

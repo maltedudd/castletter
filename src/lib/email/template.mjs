@@ -3,7 +3,7 @@
  * Uses inline styles for maximum email client compatibility
  */
 
-import { hasSummaryContent, MIN_OVERVIEW_ITEMS } from '../newsletter/digest.mjs'
+import { digestSourceType, groupDigestItems, hasSummaryContent, isPodcastOnly, MIN_OVERVIEW_ITEMS, websiteSummary } from '../newsletter/digest.mjs'
 import { safeHttpUrl, sanitizeSocialHtml, socialPostText } from '../social/sanitize.mjs'
 
 /**
@@ -32,11 +32,27 @@ import { safeHttpUrl, sanitizeSocialHtml, socialPostText } from '../social/sanit
  */
 
 /**
+ * An item an overview point is drawn from, with its original link.
+ * @typedef {Object} OverviewSource
+ * @property {string | null} id
+ * @property {string} sourceType
+ * @property {string} sourceTitle
+ * @property {string} title
+ * @property {string} url
+ */
+
+/**
+ * One key theme or connection of the overview and the items it is drawn from.
+ * @typedef {Object} OverviewPoint
+ * @property {string} text
+ * @property {OverviewSource[]} sources
+ */
+
+/**
  * Integrated overview above the single summaries of a digest (see newsletter/digest.mjs).
  * @typedef {Object} DigestOverview
- * @property {string} summary
- * @property {string[]} themes
- * @property {string[]} connections
+ * @property {OverviewPoint[]} themes
+ * @property {OverviewPoint[]} connections
  * @property {string | null} reflection
  * @property {number} [itemCount]  How many summaries the overview is based on
  */
@@ -78,12 +94,17 @@ const strings = {
     immediateArticleHeaderTagline: 'Neuer Artikel, frisch zusammengefasst',
     immediateArticleGreetingBody: (source) => `gerade ist ein neuer Artikel von „${source}“ erschienen. Hier ist deine Zusammenfassung:`,
     settingsLink: 'Einstellungen ändern',
+    digestSubject: 'Dein Castletter',
+    digestHeaderTagline: 'Dein täglicher Überblick über deine Quellen',
+    digestGreetingBody: 'hier ist das Neue aus deinen Quellen:',
+    sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'Weitere Inhalte' },
+    overviewSources: 'Quellen',
     overviewLabel: 'Überblick',
     overviewTitle: (count) => `Das Wichtigste aus ${count} Inhalten`,
     overviewThemes: 'Kernthemen',
     overviewConnections: 'Zusammenhänge & Spannungen',
     overviewReflection: 'Einordnung',
-    overviewNote: (count) => `KI-Überblick auf Basis der ${count} Zusammenfassungen unten; Podcasts sind am stärksten gewichtet, dann YouTube, dann Website (RSS). Die vollständigen Zusammenfassungen folgen.`,
+    overviewNote: (count) => `KI-Überblick auf Basis der ${count} Zusammenfassungen unten; Podcasts sind am stärksten gewichtet, dann YouTube, dann Website (RSS). Jeder Punkt verlinkt die Beiträge, aus denen er stammt.`,
     missingSummary: 'Für diesen Inhalt liegt keine Zusammenfassung vor.',
     immediateSocialSubject: 'Neuer Beitrag',
     immediateSocialHeaderTagline: 'Neuer Beitrag, unverändert weitergeleitet',
@@ -116,12 +137,17 @@ const strings = {
     immediateArticleHeaderTagline: 'New article, freshly summarized',
     immediateArticleGreetingBody: (source) => `a new article from “${source}” just came out. Here is your summary:`,
     settingsLink: 'Change settings',
+    digestSubject: 'Your Castletter',
+    digestHeaderTagline: 'Your daily overview of your sources',
+    digestGreetingBody: 'here is what is new from your sources:',
+    sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'More items' },
+    overviewSources: 'Sources',
     overviewLabel: 'Overview',
     overviewTitle: (count) => `The essentials from ${count} items`,
     overviewThemes: 'Key themes',
     overviewConnections: 'Connections & tensions',
     overviewReflection: 'Context',
-    overviewNote: (count) => `AI overview based on the ${count} summaries below; podcasts weigh most, then YouTube, then Website (RSS). The complete summaries follow.`,
+    overviewNote: (count) => `AI overview based on the ${count} summaries below; podcasts weigh most, then YouTube, then Website (RSS). Every point links the items it is drawn from.`,
     missingSummary: 'No summary is available for this item.',
     immediateSocialSubject: 'New post',
     immediateSocialHeaderTagline: 'New post, passed on unchanged',
@@ -139,9 +165,10 @@ export function getEmailSubject(locale = 'de') {
 }
 
 /**
- * Title, header tagline and greeting text for the mail kind: the daily digest keeps the
- * "daily highlights" wording, an immediate mail (exactly one episode) announces the new
- * episode (or website article) instead. Texts are raw; callers escape them for HTML.
+ * Title, header tagline and greeting text for the mail kind: a digest of podcasts only keeps
+ * the "podcast highlights" wording, any other digest is source-neutral; an immediate mail
+ * (exactly one episode) announces the new episode (or website article) instead. Texts are
+ * raw; callers escape them for HTML.
  */
 function getIntro(s, newsletters, mode) {
   if (mode === 'immediate' && newsletters.length === 1) {
@@ -166,7 +193,8 @@ function getIntro(s, newsletters, mode) {
       body: s.immediateGreetingBody(podcast),
     }
   }
-  return { title: s.subject, tagline: s.headerTagline, body: s.greetingBody }
+  if (isPodcastOnly(newsletters)) return { title: s.subject, tagline: s.headerTagline, body: s.greetingBody }
+  return { title: s.digestSubject, tagline: s.digestHeaderTagline, body: s.digestGreetingBody }
 }
 
 /** Website articles link to the article ("read"), podcast episodes and videos to the audio/video. */
@@ -184,33 +212,44 @@ function linkLabel(item, s) {
   return isArticle(item) ? s.readButton : s.listenButton
 }
 
-/** Summaries keep their (chronological) order; social posts follow in their own section. */
-function splitItems(newsletters) {
-  return {
-    summaries: newsletters.filter((item) => !isSocial(item)),
-    posts: newsletters.filter(isSocial),
-  }
-}
-
 /** Every mail except a single immediate one is a digest. */
 function isDigest(newsletters, mode) {
   return !(mode === 'immediate' && newsletters.length === 1)
 }
 
-/** The overview is shown for digests of at least MIN_OVERVIEW_ITEMS items with content. */
+/** Overview points with text and at least one linked source; others are not shown. */
+function linkedPoints(points) {
+  return (points ?? [])
+    .map((point) => ({ text: point?.text?.trim() ?? '', sources: (point?.sources ?? []).filter((source) => source?.url) }))
+    .filter((point) => point.text && point.sources.length > 0)
+}
+
+/** The overview is shown for digests of at least MIN_OVERVIEW_ITEMS items with linked key themes. */
 function visibleOverview(newsletters, mode, overview) {
   if (!overview || !isDigest(newsletters, mode) || newsletters.length < MIN_OVERVIEW_ITEMS) return null
-  const themes = (overview.themes ?? []).filter(Boolean)
-  const connections = (overview.connections ?? []).filter(Boolean)
-  const summary = overview.summary?.trim() ?? ''
-  if (!summary && themes.length === 0) return null
+  const themes = linkedPoints(overview.themes)
+  if (themes.length === 0) return null
   return {
-    summary,
     themes,
-    connections,
+    connections: linkedPoints(overview.connections),
     reflection: overview.reflection?.trim() || null,
     count: overview.itemCount ?? newsletters.length,
   }
+}
+
+/** Link text of an overview source: "Source – Title". */
+function sourceLabel(source) {
+  return [source.sourceTitle, source.title].filter((part) => part?.trim()).join(' – ') || source.url
+}
+
+/**
+ * The single items of the mail: a digest in sections (podcasts, YouTube, Website (RSS),
+ * Social, others), an immediate mail as its one item without a section.
+ */
+function itemSections(newsletters, mode) {
+  return isDigest(newsletters, mode)
+    ? groupDigestItems(newsletters)
+    : [{ type: null, items: newsletters }]
 }
 
 
@@ -225,11 +264,9 @@ export function generateEmailHTML(
   const s = strings[locale]
   const intro = getIntro(s, newsletters, mode)
   const overviewBlock = generateOverviewBlock(visibleOverview(newsletters, mode, overview), s)
-  const { summaries, posts } = splitItems(newsletters)
-  const episodeBlocks = summaries
-    .map((item) => generateEpisodeBlock(item, s))
+  const episodeBlocks = itemSections(newsletters, mode)
+    .map(({ type, items }) => sectionHeading(type, s) + items.map((item) => generateItemBlock(item, s)).join(''))
     .join('')
-  const socialBlocks = posts.length === 0 ? '' : `${isDigest(newsletters, mode) ? generateSocialSectionHeading(s) : ''}${posts.map((item) => generateSocialBlock(item, s)).join('')}`
 
   return `<!DOCTYPE html>
 <html lang="${locale}">
@@ -262,7 +299,6 @@ export function generateEmailHTML(
 
     <!-- Episode Blocks -->
     ${episodeBlocks}
-${socialBlocks}
 
     <!-- Footer -->
     <tr>
@@ -300,12 +336,25 @@ function generateSection(title, items, titleColor) {
           </tr>`
 }
 
+function generateSourceLinks(sources, s) {
+  const links = sources
+    .map((source) => `<a href="${escapeHtml(source.url)}" style="color: ${COLORS.secondary}; text-decoration: underline;">${escapeHtml(sourceLabel(source))}</a>`)
+    .join(' · ')
+  return `<br><span style="color: ${COLORS.textMuted}; font-size: 13px;">${escapeHtml(s.overviewSources)}: ${links}</span>`
+}
+
+function generatePointList(points, s) {
+  return points
+    .map((point) => `<li style="margin-bottom: 10px; color: ${COLORS.primary}; font-size: 14px; line-height: 1.5;">${escapeHtml(point.text)}${generateSourceLinks(point.sources, s)}</li>`)
+    .join('')
+}
+
 function generateOverviewBlock(overview, s) {
   if (!overview) return ''
-  const list = (title, items) => items.length === 0 ? '' : `
+  const list = (title, points) => points.length === 0 ? '' : `
               <h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(title)}</h3>
               <ul style="margin: 0; padding-left: 20px;">
-                ${generateBulletList(items)}
+                ${generatePointList(points, s)}
               </ul>`
   return `<!-- Overview -->
     <tr>
@@ -314,8 +363,7 @@ function generateOverviewBlock(overview, s) {
           <tr>
             <td style="padding: 20px;">
               <p style="margin: 0 0 4px; color: ${COLORS.secondary}; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.overviewLabel)}</p>
-              <h2 style="margin: 0 0 12px; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.overviewTitle(overview.count))}</h2>
-              ${overview.summary ? `<p style="margin: 0; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(overview.summary)}</p>` : ''}${list(s.overviewThemes, overview.themes)}${list(s.overviewConnections, overview.connections)}
+              <h2 style="margin: 0; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.overviewTitle(overview.count))}</h2>${list(s.overviewThemes, overview.themes)}${list(s.overviewConnections, overview.connections)}
               ${overview.reflection ? `<h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.overviewReflection)}</h3>
               <p style="margin: 0; color: ${COLORS.primary}; font-size: 14px; line-height: 1.5; font-style: italic;">${escapeHtml(overview.reflection)}</p>` : ''}
               <p style="margin: 16px 0 0; color: ${COLORS.textMuted}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewNote(overview.count))}</p>
@@ -326,12 +374,50 @@ function generateOverviewBlock(overview, s) {
     </tr>`
 }
 
+function generateSectionHeading(title) {
+  return `
+    <!-- Section: ${escapeHtml(title)} -->
+    <tr>
+      <td style="padding: 30px 30px 0;">
+        <h2 style="margin: 0; padding-bottom: 6px; border-bottom: 3px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(title)}</h2>
+      </td>
+    </tr>`
+}
+
 /** Intro paragraph, or a notice when the item has no summary at all. */
 function generateIntroHtml(item, s) {
   if (!hasSummaryContent(item)) {
     return `<p style="margin: 0; color: ${COLORS.textMuted}; font-size: 14px; line-height: 1.6; font-style: italic;">${escapeHtml(s.missingSummary)}</p>`
   }
   return item.intro ? `<p style="margin: 0; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(item.intro)}</p>` : ''
+}
+
+/** Section heading of a digest section; Social keeps its heading with the "unchanged" note (#39). */
+function sectionHeading(type, s) {
+  if (!type) return ''
+  return type === 'social' ? generateSocialSectionHeading(s) : generateSectionHeading(s.sections[type])
+}
+
+/** Website articles compact, social posts unchanged, podcasts and videos in full. */
+function generateItemBlock(item, s) {
+  if (isSocial(item)) return generateSocialBlock(item, s)
+  return digestSourceType(item) === 'website' ? generateWebsiteBlock(item, s) : generateEpisodeBlock(item, s)
+}
+
+/** Website (RSS) article: source, linked title and at most three sentences (Kanban #42). */
+function generateWebsiteBlock(item, s) {
+  const summary = websiteSummary(item)
+  return `
+    <tr>
+      <td style="padding: 20px 30px 10px;">
+        <p style="margin: 0 0 4px; color: ${COLORS.textMuted}; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(item.podcastTitle)}</p>
+        <h3 style="margin: 0 0 8px; font-size: 17px; font-weight: 600; line-height: 1.4;"><a href="${escapeHtml(item.audioUrl)}" style="color: ${COLORS.primary}; text-decoration: none;">${escapeHtml(item.episodeTitle)}</a></h3>
+        ${summary
+          ? `<p style="margin: 0 0 8px; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(summary)}</p>`
+          : `<p style="margin: 0 0 8px; color: ${COLORS.textMuted}; font-size: 14px; line-height: 1.6; font-style: italic;">${escapeHtml(s.missingSummary)}</p>`}
+        <a href="${escapeHtml(item.audioUrl)}" style="color: ${COLORS.secondary}; font-size: 14px; text-decoration: underline;">&#8594; ${escapeHtml(s.readButton)}</a>
+      </td>
+    </tr>`
 }
 
 function generateEpisodeBlock(item, s) {
@@ -384,11 +470,11 @@ function generateEpisodeBlock(item, s) {
 
 function generateSocialSectionHeading(s) {
   return `
-    <!-- Social Posts -->
+    <!-- Section: Social -->
     <tr>
       <td style="padding: 30px 30px 0;">
-        <h2 style="margin: 0 0 4px; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.socialSection)}</h2>
-        <p style="margin: 0; color: ${COLORS.textMuted}; font-size: 13px;">${escapeHtml(s.socialSectionNote)}</p>
+        <h2 style="margin: 0; padding-bottom: 6px; border-bottom: 3px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.socialSection)}</h2>
+        <p style="margin: 6px 0 0; color: ${COLORS.textMuted}; font-size: 13px;">${escapeHtml(s.socialSectionNote)}</p>
       </td>
     </tr>`
 }
@@ -466,12 +552,10 @@ export function generateEmailPlainText(
   const intro = getIntro(s, newsletters, mode)
   const overviewText = generateOverviewPlainText(visibleOverview(newsletters, mode, overview), s)
 
-  const { summaries, posts } = splitItems(newsletters)
-  const blocks = summaries.map((item) => generatePlainTextBlock(item, s))
-  if (posts.length > 0) {
-    const heading = isDigest(newsletters, mode) ? `${s.socialSection.toUpperCase()}\n(${s.socialSectionNote})\n\n` : ''
-    blocks.push(`${heading}${posts.map((item) => generateSocialPlainTextBlock(item, s)).join('\n\n')}`)
-  }
+  const blocks = itemSections(newsletters, mode).flatMap(({ type, items }) => [
+    ...(type === 'social' ? [`▬▬ ${s.socialSection.toUpperCase()} ▬▬\n(${s.socialSectionNote})`] : type ? [`▬▬ ${s.sections[type].toUpperCase()} ▬▬`] : []),
+    ...items.map((item) => generatePlainTextItem(item, s)),
+  ])
 
   return `${intro.title}
 ===========================
@@ -487,13 +571,32 @@ ${s.settingsLink}: ${settingsUrl}
 
 function generateOverviewPlainText(overview, s) {
   if (!overview) return ''
-  const lines = [`${s.overviewLabel.toUpperCase()} – ${s.overviewTitle(overview.count)}`, '']
-  if (overview.summary) lines.push(overview.summary)
-  if (overview.themes.length > 0) lines.push('', `${s.overviewThemes.toUpperCase()}:`, ...overview.themes.map((t) => `  • ${t}`))
-  if (overview.connections.length > 0) lines.push('', `${s.overviewConnections.toUpperCase()}:`, ...overview.connections.map((c) => `  • ${c}`))
+  const points = (title, list) => list.length === 0 ? [] : [
+    '', `${title.toUpperCase()}:`,
+    ...list.flatMap((point) => [`  • ${point.text}`, ...point.sources.map((source) => `    → ${sourceLabel(source)}: ${source.url}`)]),
+  ]
+  const lines = [
+    `${s.overviewLabel.toUpperCase()} – ${s.overviewTitle(overview.count)}`,
+    ...points(s.overviewThemes, overview.themes),
+    ...points(s.overviewConnections, overview.connections),
+  ]
   if (overview.reflection) lines.push('', `${s.overviewReflection.toUpperCase()}: ${overview.reflection}`)
   lines.push('', `(${s.overviewNote(overview.count)})`)
   return `${lines.join('\n')}\n\n`
+}
+
+function generatePlainTextItem(item, s) {
+  if (isSocial(item)) return generateSocialPlainTextBlock(item, s)
+  return digestSourceType(item) === 'website' ? generateWebsitePlainText(item, s) : generatePlainTextBlock(item, s)
+}
+
+function generateWebsitePlainText(item, s) {
+  return [
+    item.podcastTitle,
+    item.episodeTitle,
+    `→ ${s.readButton}: ${item.audioUrl}`,
+    websiteSummary(item) || s.missingSummary,
+  ].join('\n')
 }
 
 function generatePlainTextBlock(item, s) {
