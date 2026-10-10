@@ -27,6 +27,7 @@ const DELETE_DESCRIPTION_KEYS: Record<SourceType, string> = {
   podcast: 'deleteDescriptionPodcast',
   youtube: 'deleteDescriptionYoutube',
   website: 'deleteDescriptionWebsite',
+  social: 'deleteDescriptionSocial',
 }
 
 function DeleteSourceDialog({
@@ -67,7 +68,7 @@ function DeleteSourceDialog({
 
 // ─── Sources Page ────────────────────────────────────────────────────
 
-/** Podcasts, YouTube channels and websites as sources; stored in podcast_subscriptions (table name kept). */
+/** Podcasts, YouTube channels, websites and Mastodon accounts as sources; stored in podcast_subscriptions (table name kept). */
 export default function SubscriptionsPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()

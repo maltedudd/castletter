@@ -421,3 +421,113 @@ test('a failed send records no mail', async () => {
   assert.equal(db.data.newsletter_mails, undefined)
   assert.equal(statusOf(db, 'x'), 'newsletter_ready')
 })
+
+// ─── Kanban #39: social posts (no summary) ────────────────────────────
+
+const SOCIAL_SUBSCRIPTIONS = [
+  ...SUBSCRIPTIONS,
+  { id: 'sub-social-now', title: 'Anna Beispiel', user_id: 'user-1', delivery_mode: 'immediate', source_type: 'social' },
+  { id: 'sub-social-daily', title: 'Bob', user_id: 'user-1', delivery_mode: 'daily', source_type: 'social' },
+]
+
+function socialPost(id, overrides = {}) {
+  return {
+    id,
+    title: `Post ${id}`,
+    audio_url: `https://social.example/@anna/${id}`,
+    subscription_id: 'sub-social-now',
+    status: 'newsletter_ready',
+    source_type: 'social',
+    published_at: '2026-10-03T06:00:00.000Z',
+    newsletter_sent_at: null,
+    social_content: `<p>Text ${id}</p>`,
+    social_spoiler: null,
+    social_media: null,
+    ...overrides,
+  }
+}
+
+function socialDb(episodes) {
+  return makeFakeSupabase({
+    user_settings: [{ user_id: 'user-1', newsletter_email: 'malte@example.com', newsletter_delivery_hour: 7 }],
+    podcast_subscriptions: SOCIAL_SUBSCRIPTIONS,
+    episodes,
+  })
+}
+
+test('immediate social source: one mail per post with original text, warning, media and link', async () => {
+  const media = [{ type: 'image', url: 'https://files.social.example/a.jpg', previewUrl: null, description: 'Bild' }]
+  const db = socialDb([
+    socialPost('p1', { social_spoiler: 'Politik', social_media: media }),
+    socialPost('p2', { published_at: '2026-10-03T07:00:00.000Z' }),
+  ])
+  const { mails, sendEmail } = recordingMailer()
+
+  const result = await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF })
+  assert.deepEqual(result, { mailsSent: 2, episodesSent: 2 })
+  assert.deepEqual(mails.map((m) => [m.mode, m.subject]), [['immediate', 'Anna Beispiel: Post p1'], ['immediate', 'Anna Beispiel: Post p2']])
+
+  const [item] = mails[0].items
+  assert.equal(item.sourceType, 'social')
+  assert.equal(item.audioUrl, 'https://social.example/@anna/p1')
+  assert.deepEqual(item.social, { html: '<p>Text p1</p>', spoiler: 'Politik', media })
+  assert.equal(item.intro, '')
+  assert.deepEqual(item.bulletPoints, [])
+  assert.equal(statusOf(db, 'p1'), 'newsletter_sent')
+})
+
+test('daily social source: posts go into the digest unchanged, next to summaries', async () => {
+  const db = socialDb([
+    episode('a'),
+    socialPost('s1', { subscription_id: 'sub-social-daily', published_at: '2026-10-03T05:00:00.000Z' }),
+  ])
+  const { mails, sendEmail } = recordingMailer()
+
+  await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF })
+  assert.equal(mails.length, 0) // outside the delivery hour
+
+  const result = await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true })
+  assert.deepEqual(result, { mailsSent: 1, episodesSent: 2 })
+  assert.equal(mails[0].mode, 'daily')
+  assert.deepEqual(mails[0].items.map((i) => [i.id, i.sourceType]), [['s1', 'social'], ['a', 'podcast']])
+  assert.equal(mails[0].items[0].social.html, '<p>Text s1</p>')
+  assert.equal(mails[0].items[1].social, undefined)
+})
+
+test('a non-social episode without stored newsletter is still never mailed', async () => {
+  const db = socialDb([episode('orphan', { subscription_id: 'sub-now', episode_newsletters: null })])
+  const { mails, sendEmail } = recordingMailer()
+  const result = await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF })
+  assert.deepEqual(result, { mailsSent: 0, episodesSent: 0 })
+  assert.equal(mails.length, 0)
+  assert.equal(statusOf(db, 'orphan'), 'newsletter_ready')
+})
+
+test('the overview is only asked for summaries, social posts are left out', async () => {
+  const db = socialDb([
+    episode('a'),
+    episode('b', { published_at: '2026-10-03T07:00:00.000Z' }),
+    socialPost('s1', { subscription_id: 'sub-social-daily' }),
+  ])
+  const { mails, sendEmail } = recordingMailer()
+  let overviewItems = null
+  const summarizeDigest = async (items) => { overviewItems = items; return { summary: 'Ü', themes: [], connections: [], reflection: null, itemCount: 2 } }
+
+  await sendNewsletterToUser({ supabase: db, user: USER, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true, summarizeDigest })
+  assert.equal(mails[0].items.length, 3)
+  assert.equal(overviewItems.length, 3) // the generator itself filters to summarised items (hasSummaryContent)
+  assert.equal(mails[0].overview.summary, 'Ü')
+})
+
+test('deliverImmediatelyIfWanted without episodeId mails all immediate posts of the user', async () => {
+  const db = socialDb([
+    socialPost('p1'),
+    socialPost('p2', { published_at: '2026-10-03T07:00:00.000Z' }),
+    socialPost('d1', { subscription_id: 'sub-social-daily' }),
+  ])
+  const { mails, sendEmail } = recordingMailer()
+  const sent = await deliverImmediatelyIfWanted({ supabase: db, userId: 'user-1', sendEmail, now: NOW, recentCutoff: CUTOFF })
+  assert.equal(sent, 2)
+  assert.deepEqual(mails.map((m) => m.items[0].id), ['p1', 'p2'])
+  assert.equal(statusOf(db, 'd1'), 'newsletter_ready')
+})

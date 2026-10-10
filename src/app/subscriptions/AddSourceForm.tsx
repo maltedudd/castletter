@@ -2,7 +2,7 @@
 
 import { useId, useReducer, useState } from 'react'
 import { useTranslations } from 'next-intl'
-import { Globe, Podcast, Youtube } from 'lucide-react'
+import { AtSign, Globe, Podcast, Youtube } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import {
@@ -67,12 +67,24 @@ const TYPE_FIELDS: Record<SourceType, {
     checkButton: 'validateButton',
     addButton: 'websiteAddButton',
   },
+  social: {
+    icon: AtSign,
+    optionLabel: 'sourceTypeSocialLabel',
+    optionHint: 'sourceTypeSocialHint',
+    inputDescription: 'socialInputDescription',
+    inputLabel: 'socialInputLabel',
+    inputPlaceholder: 'socialInputPlaceholder',
+    inputType: 'text',
+    checkButton: 'socialResolveButton',
+    addButton: 'socialAddButton',
+  },
 }
 
 const SUGGEST_TYPE_BUTTON: Record<SourceType, string> = {
   podcast: 'suggestPodcastButton',
   youtube: 'suggestYoutubeButton',
   website: 'suggestWebsiteButton',
+  social: 'suggestSocialButton',
 }
 
 const CONTENT_MODE_KEYS = {
@@ -140,7 +152,7 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
             value={type ?? ''}
             onValueChange={(value) => dispatch({ type: 'selectType', sourceType: value })}
             disabled={checking || saving}
-            className="grid gap-3 sm:grid-cols-3"
+            className="grid gap-3 sm:grid-cols-2"
           >
             {SOURCE_TYPES.map((sourceType) => {
               const option = TYPE_FIELDS[sourceType]
@@ -241,6 +253,14 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
                     <dd>{preview.feedFormat === 'atom' ? 'Atom' : 'RSS'}</dd>
                     <dt className="text-muted-foreground">{t('websiteContentModeLabel')}</dt>
                     <dd>{t(CONTENT_MODE_KEYS[preview.contentMode])}</dd>
+                  </dl>
+                )}
+                {preview.type === 'social' && preview.socialHandle && (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                    <dt className="text-muted-foreground">{t('socialHandleLabel')}</dt>
+                    <dd className="font-mono break-all">@{preview.socialHandle}</dd>
+                    <dt className="text-muted-foreground">{t('socialAccessLabel')}</dt>
+                    <dd>{t(preview.socialAccountId ? 'socialAccessApi' : 'socialAccessRss')}</dd>
                   </dl>
                 )}
               </div>

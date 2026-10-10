@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   SOURCE_TYPE_ORDER,
+  digestSourceType,
   MIN_OVERVIEW_ITEMS,
   MAX_OVERVIEW_ITEMS,
   sortDigestItems,
@@ -48,7 +49,7 @@ test('single summaries stay chronological across source types (oldest first)', (
 })
 
 test('overview priority: podcasts, then YouTube, then Website (RSS); chronological within a type', () => {
-  assert.deepEqual(SOURCE_TYPE_ORDER, ['podcast', 'youtube', 'website'])
+  assert.deepEqual(SOURCE_TYPE_ORDER, ['podcast', 'youtube', 'website', 'social'])
   assert.deepEqual(ids(sortByOverviewPriority(MIXED)), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2'])
   assert.deepEqual(ids(sortByOverviewPriority([item('x', 'weird', null), item('legacy', undefined, null), MIXED[0]])), ['legacy', 'w1', 'x'])
 })
@@ -213,4 +214,13 @@ test('when the overview input is capped, lower-priority items are left out first
   assert.match(prompt, /\[1\] Podcast-Episode \(Priorität 1\) · Quelle: Quelle late-podcast/)
   assert.doesNotMatch(prompt, /Titel w24/)
   assert.match(prompt, /\(1 weitere Inhalte stehen im Digest/)
+})
+
+test('social posts (Kanban #39) are a source type of their own, ranked last, and never summarised', () => {
+  const social = item('s1', 'social', '2026-10-06T07:00:00.000Z', { intro: '', bulletPoints: [], keyTakeaways: [], reflection: null })
+  assert.equal(digestSourceType(social), 'social')
+  assert.deepEqual(ids(sortByOverviewPriority([social, ...MIXED])), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2', 's1'])
+  assert.deepEqual(ids(sortDigestItems([social, ...MIXED])).slice(0, 2), ['s1', 'y1'])
+  assert.equal(hasSummaryContent(social), false)
+  assert.doesNotMatch(buildDigestOverviewPrompt([social, ...MIXED], {}), /s1|Social/)
 })

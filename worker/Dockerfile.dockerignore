@@ -11,3 +11,4 @@
 !src/lib/youtube/*.mjs
 !src/lib/websites/*.mjs
 !src/lib/net/*.mjs
+!src/lib/social/*.mjs

@@ -35,6 +35,7 @@ COPY src/lib/feeds/*.mjs /app/src/lib/feeds/
 COPY src/lib/youtube/*.mjs /app/src/lib/youtube/
 COPY src/lib/websites/*.mjs /app/src/lib/websites/
 COPY src/lib/net/*.mjs /app/src/lib/net/
+COPY src/lib/social/*.mjs /app/src/lib/social/
 COPY worker/*.mjs ./
 
 USER node

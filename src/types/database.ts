@@ -41,17 +41,24 @@ export interface UserSettingsUpdate {
   updated_at?: string
 }
 
-// PROJ-2: Podcast Subscriptions (Kanban #29: also YouTube channel sources, #35: website RSS)
+// PROJ-2: Podcast Subscriptions (Kanban #29: also YouTube channel sources, #35: website RSS,
+// #39: Mastodon accounts as social sources)
 
-export type SourceType = 'podcast' | 'youtube' | 'website'
+export type SourceType = 'podcast' | 'youtube' | 'website' | 'social'
+
+export type SocialPlatform = 'mastodon'
 
 export interface PodcastSubscription {
   id: string
   user_id: string
   source_type: SourceType
-  /** RSS feed for podcasts, RSS/Atom feed for websites; for YouTube the channel's Atom feed (built from youtube_channel_id) */
+  /** RSS feed for podcasts, RSS/Atom feed for websites, the account's RSS feed for social sources; for YouTube the channel's Atom feed (built from youtube_channel_id) */
   feed_url: string
   youtube_channel_id: string | null
+  /** Social only: platform, handle (user@instance) and account ID for the public API (null: RSS only) */
+  social_platform: SocialPlatform | null
+  social_handle: string | null
+  social_account_id: string | null
   title: string
   description: string | null
   cover_image_url: string | null
@@ -69,6 +76,9 @@ export interface PodcastSubscriptionInsert {
   source_type?: SourceType
   feed_url: string
   youtube_channel_id?: string | null
+  social_platform?: SocialPlatform | null
+  social_handle?: string | null
+  social_account_id?: string | null
   title: string
   description?: string | null
   cover_image_url?: string | null
@@ -94,6 +104,27 @@ export interface WebsiteFeedMeta {
   feedFormat: 'rss' | 'atom'
   /** full_text = complete articles in the feed; excerpt = articles are loaded from the website */
   contentMode: 'full_text' | 'excerpt' | 'empty'
+}
+
+/** Resolved Mastodon account returned by the /api/social/resolve endpoint */
+export interface SocialAccountMeta {
+  title: string
+  description: string | null
+  imageUrl: string | null
+  /** The account's public RSS feed; identifies the source */
+  feedUrl: string
+  handle: string
+  /** null when the instance API is not public and the account was resolved via RSS */
+  accountId: string | null
+  platform: SocialPlatform
+}
+
+/** A media attachment or link preview of a social post (https URLs only) */
+export interface SocialMedia {
+  type: string
+  url: string
+  previewUrl: string | null
+  description: string | null
 }
 
 /** Parsed podcast metadata returned by the /api/podcasts/validate endpoint */
@@ -146,6 +177,10 @@ export interface Episode {
   article_url: string | null
   /** Website only: cleaned text of the feed item */
   feed_content: string | null
+  /** Social only: sanitised post HTML, content warning and media (never summarised) */
+  social_content: string | null
+  social_spoiler: string | null
+  social_media: SocialMedia[] | null
   /** Mail this episode was sent in (Kanban #37; null before that or while unsent) */
   newsletter_mail_id: string | null
   guid: string
