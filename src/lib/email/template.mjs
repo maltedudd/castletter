@@ -4,6 +4,7 @@
  */
 
 import { digestSourceType, groupDigestItems, hasSummaryContent, isPodcastOnly, MIN_OVERVIEW_ITEMS, websiteSummary } from '../newsletter/digest.mjs'
+import { safeHttpUrl, sanitizeSocialHtml, socialPostText } from '../social/sanitize.mjs'
 
 /**
  * @typedef {Object} NewsletterItem
@@ -16,10 +17,18 @@ import { digestSourceType, groupDigestItems, hasSummaryContent, isPodcastOnly, M
  * @property {string[]} quotes
  * @property {string[]} speakers
  * @property {string | null} reflection
- * @property {string} audioUrl  Audio/video link, or the article link for website sources
+ * @property {string} audioUrl  Audio/video link, the article link for website sources, the post link for social posts
  * @property {'podcast' | 'youtube' | 'website' | 'social'} [sourceType]
  * @property {string} [id]
  * @property {string | null} [publishedAt]
+ * @property {SocialPost} [social]  Social posts only: the original post, never summarised
+ */
+
+/**
+ * @typedef {Object} SocialPost
+ * @property {string} html  Sanitised post HTML (sanitised again when rendered)
+ * @property {string | null} spoiler  Content warning
+ * @property {{ type: string, url: string, previewUrl: string | null, description: string | null }[]} media
  */
 
 /**
@@ -88,7 +97,7 @@ const strings = {
     digestSubject: 'Dein Castletter',
     digestHeaderTagline: 'Dein täglicher Überblick über deine Quellen',
     digestGreetingBody: 'hier ist das Neue aus deinen Quellen:',
-    sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', social: 'Social', other: 'Weitere Inhalte' },
+    sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'Weitere Inhalte' },
     overviewSources: 'Quellen',
     overviewLabel: 'Überblick',
     overviewTitle: (count) => `Das Wichtigste aus ${count} Inhalten`,
@@ -97,6 +106,14 @@ const strings = {
     overviewReflection: 'Einordnung',
     overviewNote: (count) => `KI-Überblick auf Basis der ${count} Zusammenfassungen unten; Podcasts sind am stärksten gewichtet, dann YouTube, dann Website (RSS). Jeder Punkt verlinkt die Beiträge, aus denen er stammt.`,
     missingSummary: 'Für diesen Inhalt liegt keine Zusammenfassung vor.',
+    immediateSocialSubject: 'Neuer Beitrag',
+    immediateSocialHeaderTagline: 'Neuer Beitrag, unverändert weitergeleitet',
+    immediateSocialGreetingBody: (source) => `„${source}“ hat einen neuen Beitrag veröffentlicht:`,
+    socialSection: 'Social-Beiträge',
+    socialSectionNote: 'Unverändert weitergeleitet, ohne Zusammenfassung.',
+    contentWarning: 'Inhaltswarnung',
+    viewPostButton: 'Beitrag ansehen',
+    mediaLabels: { image: 'Bild', gifv: 'GIF', video: 'Video', audio: 'Audio', link: 'Link', unknown: 'Anhang' },
   },
   en: {
     subject: 'Your new podcast updates',
@@ -123,7 +140,7 @@ const strings = {
     digestSubject: 'Your Castletter',
     digestHeaderTagline: 'Your daily overview of your sources',
     digestGreetingBody: 'here is what is new from your sources:',
-    sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', social: 'Social', other: 'More items' },
+    sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'More items' },
     overviewSources: 'Sources',
     overviewLabel: 'Overview',
     overviewTitle: (count) => `The essentials from ${count} items`,
@@ -132,6 +149,14 @@ const strings = {
     overviewReflection: 'Context',
     overviewNote: (count) => `AI overview based on the ${count} summaries below; podcasts weigh most, then YouTube, then Website (RSS). Every point links the items it is drawn from.`,
     missingSummary: 'No summary is available for this item.',
+    immediateSocialSubject: 'New post',
+    immediateSocialHeaderTagline: 'New post, passed on unchanged',
+    immediateSocialGreetingBody: (source) => `“${source}” published a new post:`,
+    socialSection: 'Social posts',
+    socialSectionNote: 'Passed on unchanged, without summary.',
+    contentWarning: 'Content warning',
+    viewPostButton: 'View post',
+    mediaLabels: { image: 'Image', gifv: 'GIF', video: 'Video', audio: 'Audio', link: 'Link', unknown: 'Attachment' },
   },
 }
 
@@ -148,6 +173,13 @@ export function getEmailSubject(locale = 'de') {
 function getIntro(s, newsletters, mode) {
   if (mode === 'immediate' && newsletters.length === 1) {
     const podcast = newsletters[0].podcastTitle
+    if (isSocial(newsletters[0])) {
+      return {
+        title: `${s.immediateSocialSubject}: ${podcast}`,
+        tagline: s.immediateSocialHeaderTagline,
+        body: s.immediateSocialGreetingBody(podcast),
+      }
+    }
     if (isArticle(newsletters[0])) {
       return {
         title: `${s.immediateArticleSubject}: ${podcast}`,
@@ -170,7 +202,13 @@ function isArticle(item) {
   return item.sourceType === 'website'
 }
 
+/** Social posts are passed on unchanged in a block (and digest section) of their own. */
+function isSocial(item) {
+  return item.sourceType === 'social'
+}
+
 function linkLabel(item, s) {
+  if (isSocial(item)) return s.viewPostButton
   return isArticle(item) ? s.readButton : s.listenButton
 }
 
@@ -227,7 +265,7 @@ export function generateEmailHTML(
   const intro = getIntro(s, newsletters, mode)
   const overviewBlock = generateOverviewBlock(visibleOverview(newsletters, mode, overview), s)
   const episodeBlocks = itemSections(newsletters, mode)
-    .map(({ type, items }) => (type ? generateSectionHeading(s.sections[type]) : '') + items.map((item) => generateItemBlock(item, s)).join(''))
+    .map(({ type, items }) => sectionHeading(type, s) + items.map((item) => generateItemBlock(item, s)).join(''))
     .join('')
 
   return `<!DOCTYPE html>
@@ -354,7 +392,15 @@ function generateIntroHtml(item, s) {
   return item.intro ? `<p style="margin: 0; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(item.intro)}</p>` : ''
 }
 
+/** Section heading of a digest section; Social keeps its heading with the "unchanged" note (#39). */
+function sectionHeading(type, s) {
+  if (!type) return ''
+  return type === 'social' ? generateSocialSectionHeading(s) : generateSectionHeading(s.sections[type])
+}
+
+/** Website articles compact, social posts unchanged, podcasts and videos in full. */
 function generateItemBlock(item, s) {
+  if (isSocial(item)) return generateSocialBlock(item, s)
   return digestSourceType(item) === 'website' ? generateWebsiteBlock(item, s) : generateEpisodeBlock(item, s)
 }
 
@@ -422,6 +468,78 @@ function generateEpisodeBlock(item, s) {
     </tr>`
 }
 
+function generateSocialSectionHeading(s) {
+  return `
+    <!-- Section: Social -->
+    <tr>
+      <td style="padding: 30px 30px 0;">
+        <h2 style="margin: 0; padding-bottom: 6px; border-bottom: 3px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.socialSection)}</h2>
+        <p style="margin: 6px 0 0; color: ${COLORS.textMuted}; font-size: 13px;">${escapeHtml(s.socialSectionNote)}</p>
+      </td>
+    </tr>`
+}
+
+/** Media and link previews as plain links – no remote images (no tracking pixels). */
+function socialMediaLinks(item) {
+  return (item.social?.media ?? [])
+    .map((media) => ({ ...media, url: safeHttpUrl(media?.url ?? '') }))
+    .filter((media) => media.url)
+}
+
+function mediaLabel(media, s) {
+  const type = s.mediaLabels[media.type] ? media.type : 'unknown'
+  return media.description ? `${s.mediaLabels[type]}: ${media.description}` : s.mediaLabels[type]
+}
+
+function generateSocialBlock(item, s) {
+  const spoiler = item.social?.spoiler?.trim()
+  const media = socialMediaLinks(item)
+  const link = safeHttpUrl(item.audioUrl ?? '')
+  return `
+    <tr>
+      <td style="padding: 20px 30px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border: 1px solid ${COLORS.border}; border-radius: 8px; overflow: hidden;">
+          <!-- Post Header -->
+          <tr>
+            <td style="padding: 14px 20px; background-color: ${COLORS.secondary};">
+              <p style="margin: 0; color: ${COLORS.bg}; font-size: 14px; font-weight: 600;">${escapeHtml(item.podcastTitle)}</p>
+            </td>
+          </tr>
+          ${spoiler ? `
+          <!-- Content Warning -->
+          <tr>
+            <td style="padding: 16px 20px 0;">
+              <p style="margin: 0; padding: 10px 12px; background-color: #fff6e0; border-left: 4px solid #e0a100; color: ${COLORS.primary}; font-size: 14px; font-weight: 600;">${escapeHtml(s.contentWarning)}: ${escapeHtml(spoiler)}</p>
+            </td>
+          </tr>` : ''}
+          <!-- Post -->
+          <tr>
+            <td style="padding: 16px 20px 6px; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">
+              ${sanitizeSocialHtml(item.social?.html ?? '')}
+            </td>
+          </tr>
+          ${media.length > 0 ? `
+          <tr>
+            <td style="padding: 4px 20px;">
+              <ul style="margin: 0; padding-left: 20px;">
+                ${media.map((m) => `<li style="margin-bottom: 4px; font-size: 14px;"><a href="${escapeHtml(m.url)}" style="color: ${COLORS.secondary};">${escapeHtml(mediaLabel(m, s))}</a></li>`).join('')}
+              </ul>
+            </td>
+          </tr>` : ''}
+          ${link ? `
+          <!-- CTA Button -->
+          <tr>
+            <td style="padding: 15px 20px 20px;">
+              <a href="${escapeHtml(link)}" style="display: inline-block; background-color: ${COLORS.secondary}; color: ${COLORS.bg}; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">
+                &#8594; ${escapeHtml(s.viewPostButton)}
+              </a>
+            </td>
+          </tr>` : ''}
+        </table>
+      </td>
+    </tr>`
+}
+
 /** Generate plain text version as fallback */
 export function generateEmailPlainText(
   newsletters,
@@ -435,8 +553,8 @@ export function generateEmailPlainText(
   const overviewText = generateOverviewPlainText(visibleOverview(newsletters, mode, overview), s)
 
   const blocks = itemSections(newsletters, mode).flatMap(({ type, items }) => [
-    ...(type ? [`▬▬ ${s.sections[type].toUpperCase()} ▬▬`] : []),
-    ...items.map((item) => (digestSourceType(item) === 'website' ? generateWebsitePlainText(item, s) : generatePlainTextBlock(item, s))),
+    ...(type === 'social' ? [`▬▬ ${s.socialSection.toUpperCase()} ▬▬\n(${s.socialSectionNote})`] : type ? [`▬▬ ${s.sections[type].toUpperCase()} ▬▬`] : []),
+    ...items.map((item) => generatePlainTextItem(item, s)),
   ])
 
   return `${intro.title}
@@ -465,6 +583,11 @@ function generateOverviewPlainText(overview, s) {
   if (overview.reflection) lines.push('', `${s.overviewReflection.toUpperCase()}: ${overview.reflection}`)
   lines.push('', `(${s.overviewNote(overview.count)})`)
   return `${lines.join('\n')}\n\n`
+}
+
+function generatePlainTextItem(item, s) {
+  if (isSocial(item)) return generateSocialPlainTextBlock(item, s)
+  return digestSourceType(item) === 'website' ? generateWebsitePlainText(item, s) : generatePlainTextBlock(item, s)
 }
 
 function generateWebsitePlainText(item, s) {
@@ -525,6 +648,19 @@ function generatePlainTextBlock(item, s) {
   sections.push(`→ ${linkLabel(item, s)}: ${item.audioUrl}`)
 
   return sections.join('\n')
+}
+
+function generateSocialPlainTextBlock(item, s) {
+  const lines = ['━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', item.podcastTitle, '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', '']
+  const spoiler = item.social?.spoiler?.trim()
+  if (spoiler) lines.push(`${s.contentWarning}: ${spoiler}`, '')
+  const text = socialPostText(item.social?.html ?? '')
+  if (text) lines.push(text)
+  const media = socialMediaLinks(item)
+  if (media.length > 0) lines.push('', ...media.map((m) => `  • ${mediaLabel(m, s)} – ${m.url}`))
+  const link = safeHttpUrl(item.audioUrl ?? '')
+  if (link) lines.push('', `→ ${s.viewPostButton}: ${link}`)
+  return lines.join('\n')
 }
 
 function escapeHtml(str) {

@@ -2,7 +2,8 @@
 // summaries. Both follow the fixed source-type order – podcasts, then YouTube, then Website
 // (RSS), then Social – chronological within each type. The overview starts with concrete key
 // themes, each linked to the items it is drawn from; it is built from the stored summaries and
-// their metadata only, never from transcripts, so cost and context stay bounded.
+// their metadata only, never from transcripts, so cost and context stay bounded. Social posts
+// (Kanban #39) are mailed unchanged without a summary, so the overview never includes them.
 // Dependency-free: the OpenRouter client is injected.
 
 import { buildNewsletterCompletionOptions } from '../cron/newsletter-request.mjs'
@@ -152,7 +153,7 @@ function clip(text, maxChars) {
   return chars.length > maxChars ? `${chars.slice(0, maxChars - 1).join('').trimEnd()}…` : clean
 }
 
-const TYPE_LABELS = { podcast: 'Podcast-Episode', youtube: 'YouTube-Video', website: 'Website-Artikel', social: 'Social-Post', other: 'Inhalt' }
+const TYPE_LABELS = { podcast: 'Podcast-Episode', youtube: 'YouTube-Video', website: 'Website-Artikel', social: 'Social-Beitrag', other: 'Inhalt' }
 const PRIORITY_LABELS = { podcast: 'Priorität 1', youtube: 'Priorität 2', website: 'Priorität 3', social: 'Priorität 4', other: 'Priorität 4' }
 
 function describeItem(item, index) {

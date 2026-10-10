@@ -13,9 +13,11 @@ export const DEFAULT_DELIVERY_MODE = 'daily'
 // marking the episode sent; the send cron hands it back to `newsletter_ready`.
 export const SENDING_LEASE_MS = 15 * 60 * 1000
 
+// Left join: social posts (Kanban #39) are mailed unchanged and have no newsletter row; every
+// other episode still needs one (see hasDeliverableContent).
 const NEWSLETTER_COLUMNS =
-  'id, title, audio_url, subscription_id, published_at, source_type, ' +
-  'episode_newsletters!inner(intro, bullet_points, key_takeaways, action_items, quotes, speakers, reflection)'
+  'id, title, audio_url, subscription_id, published_at, source_type, social_content, social_spoiler, social_media, ' +
+  'episode_newsletters(intro, bullet_points, key_takeaways, action_items, quotes, speakers, reflection)'
 
 export function normalizeDeliveryMode(mode) {
   return DELIVERY_MODES.includes(mode) ? mode : DEFAULT_DELIVERY_MODE
@@ -107,12 +109,19 @@ export async function resetStaleSendingEpisodes(supabase, now = new Date()) {
   return data?.length ?? 0
 }
 
-function toNewsletterItem(episode, podcastTitle) {
-  const newsletter = Array.isArray(episode.episode_newsletters)
-    ? episode.episode_newsletters[0]
-    : episode.episode_newsletters
+function newsletterOf(episode) {
+  return (Array.isArray(episode.episode_newsletters) ? episode.episode_newsletters[0] : episode.episode_newsletters) ?? null
+}
 
-  return {
+/** Social posts are mailed as they are; everything else only with its stored newsletter. */
+function hasDeliverableContent(episode) {
+  return episode.source_type === 'social' || newsletterOf(episode) !== null
+}
+
+function toNewsletterItem(episode, podcastTitle) {
+  const newsletter = newsletterOf(episode)
+
+  const item = {
     id: episode.id,
     podcastTitle,
     episodeTitle: episode.title,
@@ -127,6 +136,15 @@ function toNewsletterItem(episode, podcastTitle) {
     sourceType: episode.source_type ?? 'podcast',
     publishedAt: episode.published_at ?? null,
   }
+  if (episode.source_type === 'social') {
+    // The original post (sanitised HTML), its content warning and media – never summarised.
+    item.social = {
+      html: episode.social_content ?? '',
+      spoiler: episode.social_spoiler ?? null,
+      media: Array.isArray(episode.social_media) ? episode.social_media : [],
+    }
+  }
+  return item
 }
 
 /**
@@ -173,9 +191,10 @@ export async function sendNewsletterToUser({
     .gte('published_at', recentCutoff)
     .in('subscription_id', [...subscriptionsById.keys()])
   if (episodeIds) query = query.in('id', episodeIds)
-  const { data: episodes, error: episodeError } = await query.order('published_at', { ascending: true })
+  const { data: rows, error: episodeError } = await query.order('published_at', { ascending: true })
   if (episodeError) throw new Error(`Episoden konnten nicht gelesen werden: ${episodeError.message}`)
-  if (!episodes || episodes.length === 0) return result
+  const episodes = (rows ?? []).filter(hasDeliverableContent)
+  if (episodes.length === 0) return result
 
   const immediate = episodes.filter((episode) => modeOf(episode) === 'immediate')
   const daily = episodes.filter((episode) => modeOf(episode) === 'daily')
@@ -221,9 +240,11 @@ export async function sendNewsletterToUser({
 
 /**
  * Right after a newsletter was generated: mails it if its podcast is set to immediate
- * delivery. Returns the number of mails sent (0 for daily podcasts or missing settings).
+ * delivery. Without `episodeId` (after a feed check imported social posts) every ready episode
+ * of the user's immediate sources is mailed. Returns the number of mails sent (0 for daily
+ * podcasts or missing settings).
  */
-export async function deliverImmediatelyIfWanted({ supabase, userId, episodeId, sendEmail, now = new Date(), recentCutoff }) {
+export async function deliverImmediatelyIfWanted({ supabase, userId, episodeId = null, sendEmail, now = new Date(), recentCutoff }) {
   if (!userId) return 0
 
   const { data: settings, error } = await supabase
@@ -236,7 +257,7 @@ export async function deliverImmediatelyIfWanted({ supabase, userId, episodeId, 
 
   // includeDaily stays off: an episode of a daily podcast waits for the digest.
   const { mailsSent } = await sendNewsletterToUser({
-    supabase, user: settings, sendEmail, now, recentCutoff, episodeIds: [episodeId],
+    supabase, user: settings, sendEmail, now, recentCutoff, episodeIds: episodeId ? [episodeId] : null,
   })
   return mailsSent
 }

@@ -202,11 +202,16 @@ test('Kanban #42: Website (RSS) articles show title, link and at most three sent
 })
 
 test('Kanban #42: Social posts keep their own section and full text, never shortened like websites', () => {
-  const social = { ...typed('s', 'social', null), intro: 'Post Satz eins. Satz zwei. Satz drei. Satz vier. Satz fünf.', bulletPoints: [] }
-  const html = generateEmailHTML('m@x.de', [DIGEST[2], social], 'https://s', 'de', 'daily')
-  assertInOrder(html, ['<!-- Section: Website (RSS) -->', 'Intro w.', '<!-- Section: Social -->', 'Satz vier. Satz fünf.'], 'social html')
-  const text = generateEmailPlainText([DIGEST[2], social], 'https://s', 'en', 'daily')
-  assertInOrder(text, ['▬▬ WEBSITE (RSS) ▬▬', 'Intro w.', '▬▬ SOCIAL ▬▬', 'Satz vier. Satz fünf.'], 'social text')
+  const social = {
+    ...typed('s', 'social', null),
+    intro: '',
+    bulletPoints: [],
+    social: { html: '<p>Post Satz eins. Satz zwei. Satz drei. Satz vier. Satz fünf.</p>', spoiler: null, media: [] },
+  }
+  const html = generateEmailHTML('m@x.de', [social, DIGEST[2]], 'https://s', 'de', 'daily')
+  assertInOrder(html, ['<!-- Section: Website (RSS) -->', 'Intro w.', '<!-- Section: Social -->', 'Social-Beiträge', 'Satz vier. Satz fünf.'], 'social html')
+  const text = generateEmailPlainText([social, DIGEST[2]], 'https://s', 'en', 'daily')
+  assertInOrder(text, ['▬▬ WEBSITE (RSS) ▬▬', 'Intro w.', '▬▬ SOCIAL POSTS ▬▬', 'Satz vier. Satz fünf.'], 'social text')
   // Unknown types land in their own last section.
   const other = generateEmailPlainText([typed('x', 'newsletter', null), DIGEST[0]], 'https://s', 'de', 'daily')
   assertInOrder(other, ['▬▬ PODCASTS ▬▬', '▬▬ WEITERE INHALTE ▬▬', 'Intro x.'], 'other')
@@ -230,4 +235,88 @@ test('an item without a summary gets a notice instead of an empty block', () => 
   assert.match(html, /Für diesen Inhalt liegt keine Zusammenfassung vor\./)
   assert.match(html, /Titel leer/)
   assert.match(generateEmailPlainText([missing], 'https://s', 'en', 'daily'), /No summary is available for this item\./)
+})
+
+// ─── Kanban #39: social posts, unchanged ─────────────────────────────
+
+const post = (id, overrides = {}) => ({
+  ...item('Anna Beispiel', `Post ${id}`),
+  id,
+  sourceType: 'social',
+  publishedAt: '2026-10-07T04:00:00.000Z',
+  intro: '',
+  bulletPoints: [],
+  audioUrl: `https://social.example/@anna/${id}`,
+  social: {
+    html: `<p>Originaltext ${id} <a href="https://example.org/x">Link</a></p>`,
+    spoiler: null,
+    media: [],
+  },
+  ...overrides,
+})
+
+test('an immediate social post shows its original text, link and post wording – no summary notice', () => {
+  const html = generateEmailHTML('m@x.de', [post('1')], 'https://s', 'de', 'immediate')
+  assert.match(html, /<title>Neuer Beitrag: Anna Beispiel<\/title>/)
+  assert.match(html, /„Anna Beispiel“ hat einen neuen Beitrag veröffentlicht/)
+  assert.match(html, /<p>Originaltext 1 <a href="https:\/\/example\.org\/x" rel="noopener noreferrer nofollow">Link<\/a><\/p>/)
+  assert.match(html, /href="https:\/\/social\.example\/@anna\/1"[^>]*>[\s\S]*Beitrag ansehen/)
+  assert.doesNotMatch(html, /keine Zusammenfassung|zusammengefasst|Hauptthemen/)
+
+  const text = generateEmailPlainText([post('1')], 'https://s', 'de', 'immediate')
+  assert.ok(text.startsWith('Neuer Beitrag: Anna Beispiel\n'))
+  assert.match(text, /Originaltext 1 Link/)
+  assert.match(text, /→ Beitrag ansehen: https:\/\/social\.example\/@anna\/1/)
+  assert.doesNotMatch(text, /No summary|keine Zusammenfassung/)
+})
+
+test('the post HTML is sanitised again when rendered', () => {
+  const evil = post('2', { social: { html: '<p onclick="x()">Hi<script>alert(1)</script><img src="https://t.example/p.gif"><a href="javascript:alert(1)">x</a></p>', spoiler: null, media: [] } })
+  const html = generateEmailHTML('m@x.de', [evil], 'https://s', 'de', 'immediate')
+  assert.doesNotMatch(html, /<script|onclick|javascript:|t\.example/)
+  assert.match(html, /<p>Hix<\/p>/)
+})
+
+test('a content warning is shown in front of the text, in HTML and plain text', () => {
+  const warned = post('3', { episodeTitle: 'CW: Politik', social: { html: '<p>Heikel</p>', spoiler: 'Politik <laut>', media: [] } })
+  const html = generateEmailHTML('m@x.de', [warned], 'https://s', 'de', 'immediate')
+  assert.match(html, /Inhaltswarnung: Politik &lt;laut&gt;/)
+  assert.ok(html.indexOf('Inhaltswarnung') < html.indexOf('<p>Heikel</p>'))
+
+  const text = generateEmailPlainText([warned], 'https://s', 'en', 'immediate')
+  assert.match(text, /Content warning: Politik <laut>\n\nHeikel/)
+})
+
+test('media and link previews are listed as links, never loaded as images', () => {
+  const media = [
+    { type: 'image', url: 'https://files.social.example/a.jpg', previewUrl: 'https://files.social.example/a_s.jpg', description: 'Ein <Bild>' },
+    { type: 'video', url: 'https://files.social.example/v.mp4', previewUrl: null, description: null },
+    { type: 'link', url: 'https://example.org/artikel', previewUrl: 'https://example.org/a.jpg', description: 'Artikel' },
+    { type: 'image', url: 'javascript:alert(1)', previewUrl: null, description: 'böse' },
+  ]
+  const html = generateEmailHTML('m@x.de', [post('4', { social: { html: '<p>Mit Medien</p>', spoiler: null, media } })], 'https://s', 'de', 'immediate')
+  assert.match(html, /<a href="https:\/\/files\.social\.example\/a\.jpg"[^>]*>Bild: Ein &lt;Bild&gt;<\/a>/)
+  assert.match(html, /<a href="https:\/\/files\.social\.example\/v\.mp4"[^>]*>Video<\/a>/)
+  assert.match(html, /<a href="https:\/\/example\.org\/artikel"[^>]*>Link: Artikel<\/a>/)
+  assert.doesNotMatch(html, /<img|javascript:|böse/)
+
+  const text = generateEmailPlainText([post('4', { social: { html: '<p>Mit Medien</p>', spoiler: null, media } })], 'https://s', 'de', 'immediate')
+  assert.match(text, /Bild: Ein <Bild> – https:\/\/files\.social\.example\/a\.jpg/)
+  assert.match(text, /Video – https:\/\/files\.social\.example\/v\.mp4/)
+})
+
+test('daily digest: summaries first, then social posts in their own section', () => {
+  const items = [...DIGEST, post('s1', { publishedAt: '2026-10-07T00:30:00.000Z' })]
+  const html = generateEmailHTML('m@x.de', items, 'https://s', 'de', 'daily', OVERVIEW)
+  const order = ['<!-- Overview -->', 'Intro p', 'Intro y', 'Intro w', 'Social-Beiträge', 'Originaltext s1']
+  const positions = order.map((part) => html.indexOf(part))
+  assert.ok(positions.every((p) => p >= 0), JSON.stringify(positions))
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions)
+
+  const text = generateEmailPlainText(items, 'https://s', 'en', 'daily')
+  assert.ok(text.indexOf('Intro w') < text.indexOf('SOCIAL POSTS'))
+  assert.ok(text.indexOf('SOCIAL POSTS') < text.indexOf('Originaltext s1'))
+
+  // Without social posts there is no social section.
+  assert.doesNotMatch(generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily'), /Social-Beiträge/)
 })

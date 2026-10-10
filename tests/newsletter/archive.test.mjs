@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { groupMailEpisodes, mailIdsOf, sortMailEpisodes, toArchiveEntry } from '../../src/lib/newsletter/archive.mjs'
+import { groupMailEpisodes, mailIdsOf, socialPostOf, sortMailEpisodes, toArchiveEntry } from '../../src/lib/newsletter/archive.mjs'
 
 const ep = (id, published_at, title, cover = null) => ({ id, published_at, podcast_subscriptions: { title, cover_image_url: cover } })
 
@@ -55,4 +55,29 @@ test('Kanban #42: archive follows the digest order – podcasts → YouTube → 
   assert.deepEqual(groupMailEpisodes(undefined), [])
   assert.deepEqual(toArchiveEntry({ id: 'm', mode: 'daily', subject: 's', sent_at: 'x', episodes }).sources,
     ['Quelle p1', 'Quelle p2', 'Quelle y1', 'Quelle w1', 'Quelle s1', 'Quelle x1'])
+})
+
+// ─── Kanban #39: social posts ────────────────────────────────────────
+
+test('socialPostOf re-sanitises the stored post and keeps only http(s) media; null for other types', () => {
+  const post = socialPostOf({
+    source_type: 'social',
+    social_content: '<p onclick="x()">Hallo<script>alert(1)</script> <a href="javascript:x()">da</a></p>',
+    social_spoiler: '  Politik ',
+    social_media: [
+      { type: 'image', url: 'https://files.example/a.jpg', previewUrl: 'https://files.example/a_s.jpg', description: 'Bild' },
+      { type: 'image', url: 'javascript:alert(1)', previewUrl: null, description: null },
+      { type: 'video', url: 'https://files.example/v.mp4', previewUrl: 'javascript:x()', description: null },
+    ],
+  })
+  assert.deepEqual(post, {
+    html: '<p>Hallo da</p>',
+    spoiler: 'Politik',
+    media: [
+      { type: 'image', url: 'https://files.example/a.jpg', previewUrl: 'https://files.example/a_s.jpg', description: 'Bild' },
+      { type: 'video', url: 'https://files.example/v.mp4', previewUrl: null, description: null },
+    ],
+  })
+  assert.equal(socialPostOf({ source_type: 'podcast' }), null)
+  assert.deepEqual(socialPostOf({ source_type: 'social', social_content: null, social_spoiler: null, social_media: null }), { html: '', spoiler: null, media: [] })
 })

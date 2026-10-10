@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Globe, Pencil, Podcast, Trash2, Youtube } from 'lucide-react'
+import { AtSign, Globe, Pencil, Podcast, Trash2, Youtube } from 'lucide-react'
 import { useTranslations, useLocale } from 'next-intl'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -40,6 +40,19 @@ const TYPE_BADGES: Record<SourceType, { icon: typeof Podcast; label: string; fai
   podcast: { icon: Podcast, label: 'typeBadgePodcast', failedTitle: 'failedEpisodesTitle', failedUnknown: 'failedUnknown' },
   youtube: { icon: Youtube, label: 'typeBadgeYoutube', failedTitle: 'failedVideosTitle', failedUnknown: 'failedUnknown' },
   website: { icon: Globe, label: 'typeBadgeWebsite', failedTitle: 'failedArticlesTitle', failedUnknown: 'failedArticleUnknown' },
+  social: { icon: AtSign, label: 'typeBadgeSocial', failedTitle: 'failedPostsTitle', failedUnknown: 'failedPostUnknown' },
+}
+
+/** Where the source card links to: channel page, account profile or the feed itself. */
+function sourceLink(source: PodcastSubscription) {
+  if (source.source_type === 'youtube') {
+    return { href: `https://www.youtube.com/channel/${source.youtube_channel_id}`, text: source.youtube_channel_id ?? '' }
+  }
+  if (source.source_type === 'social' && source.social_handle) {
+    // feed_url is the profile's RSS feed (https://<instance>/@<user>.rss).
+    return { href: source.feed_url.replace(/\.rss$/, ''), text: `@${source.social_handle}` }
+  }
+  return { href: source.feed_url, text: source.feed_url }
 }
 
 function typeInfo(source: PodcastSubscription) {
@@ -85,12 +98,9 @@ function SourceCard({
   const locale = useLocale()
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(source.title)
-  const isYouTube = source.source_type === 'youtube'
   const selectId = `delivery-mode-${source.id}`
   const switchId = `enabled-${source.id}`
-  const link = isYouTube
-    ? { href: `https://www.youtube.com/channel/${source.youtube_channel_id}`, text: source.youtube_channel_id }
-    : { href: source.feed_url, text: source.feed_url }
+  const link = sourceLink(source)
 
   function formatDateTime(value: string) {
     return new Date(value).toLocaleString(locale === 'de' ? 'de-DE' : 'en-US', {
@@ -232,7 +242,7 @@ function SourceCard({
 
 // ─── Source List ─────────────────────────────────────────────────────
 
-/** All sources of the user (podcasts, YouTube channels, websites) with the same actions. */
+/** All sources of the user (podcasts, YouTube channels, websites, Mastodon accounts) with the same actions. */
 export function SourceList({
   sources,
   onUpdate,

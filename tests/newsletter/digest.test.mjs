@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   SOURCE_TYPE_ORDER,
   DIGEST_SECTION_ORDER,
+  digestSourceType,
   MIN_OVERVIEW_ITEMS,
   MAX_OVERVIEW_ITEMS,
   MAX_WEBSITE_SENTENCES,
@@ -295,4 +296,13 @@ test('Kanban #42: websiteSummary shows at most three complete sentences, falling
     'Aussage eins. Aussage zwei. Thema eins.'
   )
   assert.equal(websiteSummary(item('w', 'website', null, { intro: '', keyTakeaways: [], bulletPoints: [] })), '')
+})
+
+test('social posts (Kanban #39) are a source type of their own, after Website (RSS), and never summarised', () => {
+  const social = item('s1', 'social', '2026-10-06T07:00:00.000Z', { intro: '', bulletPoints: [], keyTakeaways: [], reflection: null })
+  assert.equal(digestSourceType(social), 'social')
+  assert.deepEqual(ids(sortDigestItems([social, ...MIXED])), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2', 's1'])
+  assert.equal(hasSummaryContent(social), false)
+  assert.equal(websiteSummary(social), '', 'never treated as a website article')
+  assert.doesNotMatch(buildDigestOverviewPrompt([social, ...MIXED], {}), /s1|Social/)
 })

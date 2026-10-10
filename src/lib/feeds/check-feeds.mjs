@@ -2,6 +2,7 @@
 // source — podcast RSS feeds, YouTube channel Atom feeds and website RSS/Atom feeds — and
 // stores new episodes/videos/articles as `pending_transcription`, the common entry point of the
 // transcription/newsletter pipeline (website articles get their text there, without audio).
+// Social posts (Mastodon) skip that pipeline: they are stored unchanged as `newsletter_ready`.
 // Fetch, XML parser and Supabase client are injected so the rules run under node:test.
 
 import crypto from 'node:crypto'
@@ -13,6 +14,8 @@ import {
   YOUTUBE_REQUEST_HEADERS,
 } from '../youtube/channel.mjs'
 import { getItemLink, getItemText } from '../websites/feed.mjs'
+import { fetchMastodonPosts, isImportablePost } from '../social/mastodon.mjs'
+import { sanitizeSocialHtml, socialPostText, socialPostTitle } from '../social/sanitize.mjs'
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
 export const MAX_NEW_EPISODES_PER_FEED = 50
@@ -31,26 +34,31 @@ const APPROXIMATE_DATE_MARGIN_MS = 48 * 60 * 60 * 1000
  * `{ listUploads(channelId) → entries, fetchPublishTimes(videoIds) → { [videoId]: iso } }`.
  *
  * The summary lists `issues: [{ source, error | note }]` when any source failed or needed
- * the fallback, so logs show which source is affected.
+ * the fallback, so logs show which source is affected, and `socialUserIds` (the owners of
+ * social sources with new posts) so the caller can mail immediate posts right away.
  */
 export async function checkAllFeeds({ supabase, fetchImpl = fetch, parseXml, now = () => new Date(), youtubeFallback = null }) {
   const { data: rows, error } = await supabase
     .from('podcast_subscriptions')
-    .select('id, feed_url, title, created_at, source_type, youtube_channel_id, enabled')
+    .select('id, user_id, feed_url, title, created_at, source_type, youtube_channel_id, social_account_id, enabled')
     .limit(MAX_SUBSCRIPTIONS)
   if (error || !rows) {
     throw new Error(`Failed to fetch subscriptions: ${error?.message ?? 'no data'}`)
   }
   const subscriptions = rows.filter((subscription) => subscription.enabled !== false)
 
+  /** @type {{ subscriptionsChecked: number, newEpisodes: number, errors: number, issues?: { source: string, error?: string, note?: string }[], socialUserIds?: string[] }} */
   const summary = { subscriptionsChecked: subscriptions.length, newEpisodes: 0, errors: 0 }
   const issues = []
+  const socialUserIds = new Set()
   for (let i = 0; i < subscriptions.length; i += CHUNK_SIZE) {
     const chunk = subscriptions.slice(i, i + CHUNK_SIZE)
     const results = await Promise.allSettled(
       chunk.map((subscription) =>
         subscription.source_type === 'youtube'
           ? checkYouTubeChannel({ supabase, fetchImpl, subscription, now: now(), youtubeFallback })
+          : subscription.source_type === 'social'
+          ? checkSocialAccount({ supabase, fetchImpl, parseXml, subscription, now: now() })
           : checkSubscription({
               supabase, fetchImpl, parseXml, subscription, now: now(),
               selectItems: subscription.source_type === 'website' ? selectNewWebsiteItems : selectNewEpisodes,
@@ -61,6 +69,9 @@ export async function checkAllFeeds({ supabase, fetchImpl = fetch, parseXml, now
       const source = chunk[index].title
       if (result.status === 'fulfilled') {
         summary.newEpisodes += result.value.newEpisodes
+        if (chunk[index].source_type === 'social' && result.value.newEpisodes > 0 && chunk[index].user_id) {
+          socialUserIds.add(chunk[index].user_id)
+        }
         if (result.value.error) {
           summary.errors++
           issues.push({ source, error: result.value.error })
@@ -74,6 +85,7 @@ export async function checkAllFeeds({ supabase, fetchImpl = fetch, parseXml, now
     })
   }
   if (issues.length > 0) summary.issues = issues
+  if (socialUserIds.size > 0) summary.socialUserIds = [...socialUserIds]
   return summary
 }
 
@@ -187,6 +199,45 @@ async function checkYouTubeChannel({ supabase, fetchImpl, subscription, now, you
   await supabase.from('feed_check_logs').insert(
     result.error
       ? { subscription_id: subscription.id, status: 'error', error_message: result.error, episodes_found: result.newEpisodes }
+      : { subscription_id: subscription.id, status: 'success', episodes_found: result.newEpisodes, ...(result.note ? { error_message: result.note } : {}) }
+  )
+  await persistCheckResult({ supabase, subscription, now, error: result.error })
+
+  return result
+}
+
+/**
+ * Social account (Mastodon): public posts from the API, or the RSS feed as fallback (then a
+ * `note`). New posts are stored unchanged and sanitised as `newsletter_ready`, so neither
+ * transcription nor newsletter generation ever touches them; delivery mails them as they are.
+ */
+async function checkSocialAccount({ supabase, fetchImpl, parseXml, subscription, now }) {
+  let result
+  try {
+    const { posts, note } = await fetchMastodonPosts({ subscription, fetchImpl, parseXml })
+
+    const { data: existingEpisodes, error: existingError } = await supabase
+      .from('episodes')
+      .select('guid')
+      .eq('subscription_id', subscription.id)
+    if (existingError) throw new Error(`Vorhandene Posts konnten nicht gelesen werden: ${existingError.message}`)
+    const existingGuids = new Set((existingEpisodes || []).map((e) => e.guid))
+
+    const rows = selectNewSocialPosts({ posts, subscription, existingGuids, now })
+    if (rows.length > 0) {
+      const { error: insertError } = await supabase
+        .from('episodes')
+        .upsert(rows, { onConflict: 'subscription_id,guid', ignoreDuplicates: true })
+      if (insertError) throw new Error(`Insert failed: ${insertError.message}`)
+    }
+    result = { newEpisodes: rows.length, note }
+  } catch (err) {
+    result = { newEpisodes: 0, error: err instanceof Error ? err.message : 'Unknown error' }
+  }
+
+  await supabase.from('feed_check_logs').insert(
+    result.error
+      ? { subscription_id: subscription.id, status: 'error', error_message: result.error }
       : { subscription_id: subscription.id, status: 'success', episodes_found: result.newEpisodes, ...(result.note ? { error_message: result.note } : {}) }
   )
   await persistCheckResult({ supabase, subscription, now, error: result.error })
@@ -387,6 +438,43 @@ export function selectNewWebsiteItems({ items, subscription, existingGuids, now 
       source_type: 'website',
       article_url: articleUrl,
       feed_content: text || null,
+    })
+  }
+  return rows
+}
+
+/**
+ * Picks the social posts that become new `newsletter_ready` rows: no boosts, no replies to
+ * other accounts (see isImportablePost), inside the import window, each post URL once.
+ * `audio_url` (NOT NULL for every row) holds the link to the original post.
+ */
+export function selectNewSocialPosts({ posts, subscription, existingGuids, now }) {
+  const cutoffDate = getImportCutoff(subscription, now)
+  const seen = new Set(existingGuids)
+  const rows = []
+  for (const post of posts) {
+    if (rows.length >= MAX_NEW_EPISODES_PER_FEED) break
+    if (!isImportablePost(post)) continue
+    const publishedAt = new Date(post.publishedAt)
+    if (isNaN(publishedAt.getTime()) || publishedAt < cutoffDate || publishedAt > now) continue
+    if (seen.has(post.guid)) continue
+    seen.add(post.guid)
+    const html = sanitizeSocialHtml(post.html)
+    const text = socialPostText(html)
+    const media = post.media ?? []
+    rows.push({
+      subscription_id: subscription.id,
+      guid: post.guid,
+      title: socialPostTitle({ text, spoiler: post.spoiler, hasMedia: media.length > 0 }),
+      description: text.slice(0, 500) || null,
+      audio_url: post.url,
+      duration_seconds: null,
+      published_at: publishedAt.toISOString(),
+      status: 'newsletter_ready',
+      source_type: 'social',
+      social_content: html || null,
+      social_spoiler: post.spoiler ?? null,
+      social_media: media.length > 0 ? media : null,
     })
   }
   return rows

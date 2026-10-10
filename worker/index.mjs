@@ -1,5 +1,5 @@
-// Castletter worker: (if enabled) imports new episodes/videos/articles from the podcast feeds,
-// YouTube channels and website feeds, polls Supabase for pending episodes and transcribes them
+// Castletter worker: (if enabled) imports new episodes/videos/articles/posts from the podcast
+// feeds, YouTube channels, website feeds and Mastodon accounts, polls Supabase for pending episodes and transcribes them
 // completely (YouTube: captions first, full-audio STT fallback; websites: public full text
 // without audio), then (if enabled)
 // generates their newsletters and sends them — without the Vercel function time limit.
@@ -16,6 +16,7 @@ import { runGenerationOnce, runSendSweep, createHourlyGate } from './newsletter-
 import { runFeedCheck, createIntervalGate } from './feed-jobs.mjs'
 import { generateEmailHTML, generateEmailPlainText } from '../src/lib/email/template.mjs'
 import { createDigestOverviewGenerator } from '../src/lib/newsletter/digest.mjs'
+import { MASTODON_RSS_CUSTOM_FIELDS } from '../src/lib/social/mastodon.mjs'
 import { createOpenRouterChunkTranscriber } from '../src/lib/transcription/audio-transcriber.mjs'
 import { createFfmpeg } from '../src/lib/transcription/audio-file.mjs'
 import { createYtDlpClient } from '../src/lib/youtube/yt-dlp.mjs'
@@ -81,7 +82,8 @@ async function main() {
     // Reads the channel's Videos tab when YouTube's feed endpoint is down.
     youtubeFallback: ytDlp,
     parseXml: (() => {
-      const parser = new Parser()
+      // Media RSS fields keep the attachments of Mastodon posts (RSS fallback of social sources).
+      const parser = new Parser({ customFields: MASTODON_RSS_CUSTOM_FIELDS })
       return (xml) => parser.parseString(xml)
     })(),
     sendEmail: config.newsletters ? createMailer(config.newsletters) : null,

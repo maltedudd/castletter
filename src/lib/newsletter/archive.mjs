@@ -2,6 +2,7 @@
 // Pure mapping of the Supabase rows, so list and detail page share it and it runs under node:test.
 
 import { compareDigestItems, DIGEST_SECTION_ORDER, digestSourceType } from './digest.mjs'
+import { safeHttpUrl, sanitizeSocialHtml } from '../social/sanitize.mjs'
 
 export const ARCHIVE_PAGE_SIZE = 20
 export const ARCHIVE_MODES = ['daily', 'immediate']
@@ -10,6 +11,8 @@ export const ARCHIVE_MODES = ['daily', 'immediate']
 function one(ref) {
   return (Array.isArray(ref) ? ref[0] : ref) ?? null
 }
+
+const isSocial = (episode) => episode?.source_type === 'social'
 
 function digestKey(episode) {
   return {
@@ -38,6 +41,28 @@ export function groupMailEpisodes(episodes) {
   return DIGEST_SECTION_ORDER
     .map((type) => ({ type, episodes: sorted.filter((episode) => digestSourceType(digestKey(episode)) === type) }))
     .filter((group) => group.episodes.length > 0)
+}
+
+/**
+ * The original post of a social episode for display: HTML sanitised again (defense in depth),
+ * content warning and only media with http(s) links. null for every other source type.
+ * @returns {{ html: string, spoiler: string | null, media: { type: string, url: string | null, previewUrl: string | null, description: string | null }[] } | null}
+ */
+export function socialPostOf(episode) {
+  if (!isSocial(episode)) return null
+  const media = (Array.isArray(episode.social_media) ? episode.social_media : [])
+    .map((entry) => ({
+      type: typeof entry?.type === 'string' ? entry.type : 'unknown',
+      url: safeHttpUrl(entry?.url ?? ''),
+      previewUrl: safeHttpUrl(entry?.previewUrl ?? ''),
+      description: typeof entry?.description === 'string' && entry.description.trim() ? entry.description.trim() : null,
+    }))
+    .filter((entry) => entry.url)
+  return {
+    html: sanitizeSocialHtml(episode.social_content ?? ''),
+    spoiler: typeof episode.social_spoiler === 'string' && episode.social_spoiler.trim() ? episode.social_spoiler.trim() : null,
+    media,
+  }
 }
 
 /**

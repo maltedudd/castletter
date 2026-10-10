@@ -6,8 +6,9 @@ import { getTranslations, getLocale } from 'next-intl/server'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { groupMailEpisodes } from '@/lib/newsletter/archive.mjs'
+import { groupMailEpisodes, socialPostOf } from '@/lib/newsletter/archive.mjs'
 import { websiteSummary } from '@/lib/newsletter/digest.mjs'
+import type { SocialMedia } from '@/types/database'
 
 interface PageProps {
   params: Promise<{ id: string }>
@@ -19,6 +20,9 @@ interface MailEpisode {
   audio_url: string | null
   source_type: string | null
   published_at: string
+  social_content: string | null
+  social_spoiler: string | null
+  social_media: SocialMedia[] | null
   podcast_subscriptions: { title: string; cover_image_url: string | null } | { title: string; cover_image_url: string | null }[] | null
   episode_newsletters: NewsletterContent | NewsletterContent[] | null
 }
@@ -69,6 +73,55 @@ function BulletList({ items }: { items: string[] }) {
   )
 }
 
+const MEDIA_LABEL_KEYS: Record<string, string> = {
+  image: 'mediaImage',
+  gifv: 'mediaGifv',
+  video: 'mediaVideo',
+  audio: 'mediaAudio',
+  link: 'mediaLink',
+}
+
+const SOURCE_PLACEHOLDERS: Record<string, string> = { website: '🌐', youtube: '▶️', social: '💬' }
+
+/** A social post as it was mailed: content warning, original (sanitised) text and media links. */
+function SocialPost({ post, t }: { post: NonNullable<ReturnType<typeof socialPostOf>>; t: Awaited<ReturnType<typeof getTranslations>> }) {
+  return (
+    <div className="space-y-4">
+      {post.spoiler && (
+        <p className="rounded-md border-l-4 border-amber-500 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+          {t('contentWarning')}: {post.spoiler}
+        </p>
+      )}
+      {post.html && (
+        <div
+          className="space-y-3 leading-relaxed text-muted-foreground break-words [&_a]:underline [&_a]:text-primary [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+          // Sanitised by socialPostOf (allowlist: formatting tags and http(s) links only).
+          dangerouslySetInnerHTML={{ __html: post.html }}
+        />
+      )}
+      {post.media.length > 0 && (
+        <ul className="space-y-3">
+          {post.media.map((media, index) => {
+            const label = t(MEDIA_LABEL_KEYS[media.type] ?? 'mediaUnknown')
+            const text = media.description ? `${label}: ${media.description}` : label
+            return (
+              <li key={index}>
+                <a href={media.url ?? undefined} target="_blank" rel="noopener noreferrer nofollow" className="flex items-center gap-3 text-sm hover:text-primary">
+                  {media.previewUrl?.startsWith('https://') && (
+                    <Image src={media.previewUrl} alt="" width={96} height={64} className="h-16 w-24 rounded-md object-cover shrink-0" />
+                  )}
+                  <span className="underline">{text}</span>
+                  <span className="sr-only">{t('opensInNewTab')}</span>
+                </a>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 /** One sent mail of the archive with every episode it contained, in the sections and order of the mail. */
 export default async function ArchiveMailPage({ params }: PageProps) {
   const { id } = await params
@@ -103,6 +156,9 @@ export default async function ArchiveMailPage({ params }: PageProps) {
         audio_url,
         source_type,
         published_at,
+        social_content,
+        social_spoiler,
+        social_media,
         podcast_subscriptions ( title, cover_image_url ),
         episode_newsletters ( intro, bullet_points, key_takeaways, action_items, quotes, speakers, reflection )
       )
@@ -161,13 +217,17 @@ export default async function ArchiveMailPage({ params }: PageProps) {
           {groups.map((group) => (
             <section key={group.type} aria-labelledby={showSections ? `section-${group.type}` : undefined} className="space-y-12">
               {showSections && (
-                <h2 id={`section-${group.type}`} className="text-2xl font-bold border-b-4 border-primary pb-2">
-                  {t(SECTION_KEYS[group.type])}
-                </h2>
+                <div className="space-y-1 border-b-4 border-primary pb-2">
+                  <h2 id={`section-${group.type}`} className="text-2xl font-bold">
+                    {t(SECTION_KEYS[group.type])}
+                  </h2>
+                  {group.type === 'social' && <p className="text-sm text-muted-foreground">{t('socialSectionNote')}</p>}
+                </div>
               )}
               {group.episodes.map((episode) => {
                 const source = one(episode.podcast_subscriptions)
                 const newsletter = one(episode.episode_newsletters)
+                const socialPost = socialPostOf(episode)
                 const sourceTitle = source?.title ?? t('unknownPodcast')
                 // Website (RSS) articles: at most three sentences under title and link, like the mail.
                 const articleSummary = episode.source_type === 'website' && newsletter
@@ -190,7 +250,7 @@ export default async function ArchiveMailPage({ params }: PageProps) {
                         <Image src={source.cover_image_url} alt="" width={64} height={64} className="rounded-xl object-cover shrink-0" />
                       ) : (
                         <div aria-hidden="true" className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center text-2xl shrink-0">
-                          {episode.source_type === 'website' ? '🌐' : episode.source_type === 'youtube' ? '▶️' : '🎙️'}
+                          {SOURCE_PLACEHOLDERS[episode.source_type ?? ''] ?? '🎙️'}
                         </div>
                       )}
                       <div className="min-w-0">
@@ -199,7 +259,9 @@ export default async function ArchiveMailPage({ params }: PageProps) {
                       </div>
                     </div>
 
-                    {articleSummary !== null ? (
+                    {socialPost ? (
+                      <SocialPost post={socialPost} t={t} />
+                    ) : articleSummary !== null ? (
                       <p className="text-muted-foreground leading-relaxed">{articleSummary || t('contentLoadError')}</p>
                     ) : newsletter ? (
                       <div className="space-y-6">
@@ -214,7 +276,7 @@ export default async function ArchiveMailPage({ params }: PageProps) {
                             <Section key={key} title={t(key)}>
                               <BulletList items={items as string[]} />
                             </Section>
-          ))}
+                          ))}
                         {newsletter.reflection && (
                           <Section title={t('sectionReflection')}>
                             <p className="text-muted-foreground leading-relaxed italic">{newsletter.reflection}</p>
@@ -228,7 +290,7 @@ export default async function ArchiveMailPage({ params }: PageProps) {
                     {episode.audio_url && (
                       <Button asChild variant="outline">
                         <a href={episode.audio_url} target="_blank" rel="noopener noreferrer">
-                          {t(episode.source_type === 'website' ? 'readArticleButton' : 'listenButton')}
+                          {t(episode.source_type === 'social' ? 'viewPostButton' : episode.source_type === 'website' ? 'readArticleButton' : 'listenButton')}
                           <span className="sr-only">: {episode.title} {t('opensInNewTab')}</span>
                         </a>
                       </Button>
