@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
+import { deliveryTargetsOf } from '@/lib/newsletter/delivery-targets.mjs'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -124,6 +125,7 @@ export default function SubscriptionsPage() {
 
   async function handleUpdate(source: PodcastSubscription, patch: SourcePatch) {
     setErrorMessage(null)
+    const isDeliveryPatch = patch.deliver_immediately !== undefined || patch.deliver_daily !== undefined
     // Optimistic update; reverted if saving fails.
     setSources((prev) => prev.map((s) => (s.id === source.id ? { ...s, ...patch } : s)))
 
@@ -134,13 +136,15 @@ export default function SubscriptionsPage() {
 
     if (error) {
       setSources((prev) => prev.map((s) => (s.id === source.id ? source : s)))
-      setErrorMessage(t(patch.delivery_mode ? 'errorSaveDeliveryMode' : 'errorSave'))
+      setErrorMessage(t(isDeliveryPatch ? 'errorSaveDeliveryMode' : 'errorSave'))
       return false
     }
 
     const title = patch.title ?? source.title
-    if (patch.delivery_mode) {
-      setSuccessMessage(t(patch.delivery_mode === 'immediate' ? 'successDeliveryImmediate' : 'successDeliveryDaily', { title }))
+    if (isDeliveryPatch) {
+      const { immediate, daily } = deliveryTargetsOf({ ...source, ...patch })
+      const key = immediate && daily ? 'successDeliveryBoth' : immediate ? 'successDeliveryImmediate' : 'successDeliveryDaily'
+      setSuccessMessage(t(key, { title }))
     } else if (patch.enabled !== undefined) {
       setSuccessMessage(t(patch.enabled ? 'successEnabled' : 'successDisabled', { title }))
     } else {

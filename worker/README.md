@@ -68,7 +68,7 @@ YouTube-Kanäle sind Quellen wie Podcast-Feeds: Sie werden auf der Abo-Seite der
 Channel-ID (`UC…`), Kanal-URL (`/channel/…`, `/@handle`, `/c/…`, `/user/…`) oder `@Handle`
 angelegt. Gespeichert wird immer die aufgelöste, stabile Channel-ID
 (`podcast_subscriptions.source_type = 'youtube'`, `youtube_channel_id`). Kanäle lassen sich
-umbenennen, auf „Sofort“/„Täglich“ stellen, deaktivieren und löschen.
+umbenennen, auf „Sofort“, „Täglich“ oder beides stellen, deaktivieren und löschen.
 
 1. **Feed-Check:** Für jeden aktiven Kanal wird der offizielle Atom-Feed
    `https://www.youtube.com/feeds/videos.xml?channel_id=<ID>` gelesen (immer aus der
@@ -192,7 +192,7 @@ Nach der Transkription läuft in jeder Iteration zusätzlich:
    zurück auf `transcribed`. Permanente Fehler → `newsletter_failed`. Tonalität und
    optionale Prompt-Ergänzung kommen aus den Einstellungen der Besitzerin/des Besitzers
    (`user_settings.summary_tone`, `summary_prompt_addition`).
-2. **Sofortversand:** Hat die Besitzerin/der Besitzer „Sofort“ gewählt, geht die Mail
+2. **Sofortversand:** Ist bei der Quelle „Sofort benachrichtigen“ aktiv, geht die Mail
    direkt danach raus.
 3. **Versand-Sweep, einmal pro UTC-Stunde:** tägliche Sammelmails für alle mit passender
    Stunde, Sofort-Mails als Fallback, Reset hängender Versand-Claims. Ein fehlgeschlagener
@@ -218,9 +218,21 @@ der Nutzerin/des Nutzers (ein Modellaufruf pro Sammelmail,
 
 Das Alters-Limit gilt für die ganze Pipeline (statt der 48 h der Vercel-Crons).
 
+**Zustellziele (Kanban #43):** Jede Quelle hat zwei unabhängige Ziele,
+`podcast_subscriptions.deliver_immediately` und `deliver_daily` (mindestens eins aktiv; das
+alte `delivery_mode` wird bis zum Contract-Schritt per Trigger synchron gehalten). Der
+Versandstatus steht pro Beitrag **und** Ziel in `newsletter_deliveries`: Der Claim ist die
+eindeutige Zeile `(episode_id, target)` (Insert mit ON CONFLICT DO NOTHING), nach dem Versand
+`sent` mit `mail_id`; ein fehlgeschlagener Versand löscht nur den Claim dieses Ziels, hängende
+Claims (> 15 min) räumt der Sweep ab. Bei „beides“ geht genau eine Sofort-Mail raus und der
+Beitrag steht genau einmal in der nächsten Sammelmail; erst wenn alle gewünschten Ziele
+versendet sind, wird er `newsletter_sent`.
+
 **Archiv (Kanban #37):** Jede versendete Mail wird in `newsletter_mails` gespeichert (Art
 `daily`/`immediate`, Betreff, Anzahl Beiträge, Zeitpunkt); ihre Beiträge verweisen über
-`episodes.newsletter_mail_id` darauf. Die App zeigt im Archiv diese Mails statt einzelner
+`newsletter_deliveries.mail_id` darauf (ein Beitrag mit beiden Zielen steht so in seiner
+Sofort-Mail und in der Sammelmail; `episodes.newsletter_mail_id` bleibt als Zeiger auf die
+letzte Mail für Mails vor Kanban #43). Die App zeigt im Archiv diese Mails statt einzelner
 Beiträge. Schlägt das Speichern fehl, gilt die Mail trotzdem als versendet (kein
 Doppelversand); der Log-Eintrag `send_sweep` zählt das unter `archiveErrors`.
 

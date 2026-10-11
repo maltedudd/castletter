@@ -91,15 +91,23 @@ export default function ArchivePage() {
       .order('title', { ascending: true })
     if (subs) setSubscriptions(subs)
 
-    // Source filter: the mails that contain at least one episode of this source.
+    // Source filter: the mails that contain at least one episode of this source – through its
+    // deliveries (Kanban #43) and the legacy pointer of mails sent before that.
     let mailIds: string[] | null = null
     if (filterSubscriptionId !== 'all') {
-      const { data: sent } = await supabase
-        .from('episodes')
-        .select('newsletter_mail_id')
-        .eq('subscription_id', filterSubscriptionId)
-        .not('newsletter_mail_id', 'is', null)
-      mailIds = mailIdsOf(sent ?? [])
+      const [{ data: delivered }, { data: sent }] = await Promise.all([
+        supabase
+          .from('newsletter_deliveries')
+          .select('mail_id, episodes!inner(subscription_id)')
+          .eq('episodes.subscription_id', filterSubscriptionId)
+          .not('mail_id', 'is', null),
+        supabase
+          .from('episodes')
+          .select('newsletter_mail_id')
+          .eq('subscription_id', filterSubscriptionId)
+          .not('newsletter_mail_id', 'is', null),
+      ])
+      mailIds = mailIdsOf(delivered ?? [], sent ?? [])
       if (mailIds.length === 0) {
         setEntries([])
         setTotalCount(0)
@@ -108,6 +116,8 @@ export default function ArchivePage() {
       }
     }
 
+    // An episode with immediate and daily delivery is in two mails: listed through
+    // newsletter_deliveries, plus the legacy embed for mails sent before Kanban #43.
     let query = supabase
       .from('newsletter_mails')
       .select(
@@ -117,7 +127,14 @@ export default function ArchivePage() {
         subject,
         episode_count,
         sent_at,
-        episodes (
+        newsletter_deliveries (
+          episodes (
+            id,
+            published_at,
+            podcast_subscriptions ( title, cover_image_url )
+          )
+        ),
+        episodes!newsletter_mail_id (
           id,
           published_at,
           podcast_subscriptions ( title, cover_image_url )
