@@ -1,5 +1,8 @@
 // Newsletter archive: one entry per sent mail (`newsletter_mails`) with the episodes it held.
 // Pure mapping of the Supabase rows, so list and detail page share it and it runs under node:test.
+// Since Kanban #43 an episode can be in two mails (immediate + digest): the episodes of a mail
+// come from its `newsletter_deliveries`, plus the legacy `episodes.newsletter_mail_id` pointer
+// for mails sent by code from before #43.
 
 import { compareDigestItems, DIGEST_SECTION_ORDER, digestSourceType } from './digest.mjs'
 import { safeHttpUrl, sanitizeSocialHtml } from '../social/sanitize.mjs'
@@ -22,6 +25,22 @@ function digestKey(episode) {
     podcastTitle: one(episode.podcast_subscriptions)?.title,
     episodeTitle: episode.title,
   }
+}
+
+/**
+ * Episodes of a mail row: embedded through `newsletter_deliveries ( episodes (...) )` and the
+ * legacy `episodes (...)` embed, unique by id (delivery rows first).
+ */
+export function mailEpisodesOf(mail) {
+  const episodes = new Map()
+  for (const delivery of mail?.newsletter_deliveries ?? []) {
+    const episode = one(delivery?.episodes)
+    if (episode?.id && !episodes.has(episode.id)) episodes.set(episode.id, episode)
+  }
+  for (const episode of mail?.episodes ?? []) {
+    if (episode?.id && !episodes.has(episode.id)) episodes.set(episode.id, episode)
+  }
+  return [...episodes.values()]
 }
 
 /**
@@ -72,7 +91,8 @@ export function socialPostOf(episode) {
 export function toArchiveEntry(mail) {
   const sources = []
   let coverImageUrl = null
-  for (const episode of sortMailEpisodes(mail.episodes)) {
+  const episodes = mailEpisodesOf(mail)
+  for (const episode of sortMailEpisodes(episodes)) {
     const source = one(episode.podcast_subscriptions)
     if (!source?.title) continue
     if (!sources.includes(source.title)) sources.push(source.title)
@@ -83,13 +103,17 @@ export function toArchiveEntry(mail) {
     mode: ARCHIVE_MODES.includes(mail.mode) ? mail.mode : 'daily',
     subject: mail.subject,
     sentAt: mail.sent_at,
-    itemCount: mail.episode_count ?? mail.episodes?.length ?? 0,
+    itemCount: mail.episode_count ?? episodes.length,
     sources,
     coverImageUrl,
   }
 }
 
-/** Unique mail ids of episodes (for the source filter: mails that contain this source). */
-export function mailIdsOf(episodes) {
-  return [...new Set((episodes ?? []).map((episode) => episode.newsletter_mail_id).filter(Boolean))]
+/**
+ * Unique mail ids (for the source filter: mails that contain this source) from delivery rows
+ * (`mail_id`) and/or legacy episode rows (`newsletter_mail_id`).
+ */
+export function mailIdsOf(...lists) {
+  const ids = lists.flatMap((rows) => (rows ?? []).map((row) => row?.mail_id ?? row?.newsletter_mail_id))
+  return [...new Set(ids.filter(Boolean))]
 }

@@ -5,6 +5,9 @@
 
 export type NewsletterDeliveryMode = 'daily' | 'immediate'
 
+/** Kanban #43: the two independent delivery targets of a source */
+export type DeliveryTarget = 'immediate' | 'daily'
+
 /** Kanban #38: tone of the AI summaries (UI: sachlich, prägnant, analytisch, warm). */
 export type SummaryTone = 'neutral' | 'concise' | 'analytical' | 'warm'
 
@@ -62,7 +65,12 @@ export interface PodcastSubscription {
   title: string
   description: string | null
   cover_image_url: string | null
+  /** @deprecated since Kanban #43: derived from deliver_immediately/deliver_daily by a DB trigger */
   delivery_mode: NewsletterDeliveryMode
+  /** Kanban #43: one mail per item as soon as it is ready (at least one target is on) */
+  deliver_immediately: boolean
+  /** Kanban #43: item is included in the daily digest */
+  deliver_daily: boolean
   enabled: boolean
   last_checked_at: string | null
   last_check_status: 'success' | 'error' | null
@@ -82,7 +90,10 @@ export interface PodcastSubscriptionInsert {
   title: string
   description?: string | null
   cover_image_url?: string | null
+  /** @deprecated since Kanban #43: use deliver_immediately/deliver_daily */
   delivery_mode?: NewsletterDeliveryMode
+  deliver_immediately?: boolean
+  deliver_daily?: boolean
   enabled?: boolean
 }
 
@@ -181,7 +192,7 @@ export interface Episode {
   social_content: string | null
   social_spoiler: string | null
   social_media: SocialMedia[] | null
-  /** Mail this episode was sent in (Kanban #37; null before that or while unsent) */
+  /** Latest mail this episode was sent in (Kanban #37; legacy pointer – since #43 see NewsletterDelivery) */
   newsletter_mail_id: string | null
   guid: string
   title: string
@@ -216,6 +227,21 @@ export interface NewsletterMail {
   subject: string
   episode_count: number
   sent_at: string
+  created_at: string
+}
+
+// Kanban #43: delivery of one episode to one target; the unique (episode_id, target) row is the send claim
+
+export interface NewsletterDelivery {
+  id: string
+  user_id: string
+  episode_id: string
+  target: DeliveryTarget
+  /** sending = claimed by a run (claimed_at starts the lease); sent = mailed in mail_id */
+  status: 'sending' | 'sent'
+  claimed_at: string
+  sent_at: string | null
+  mail_id: string | null
   created_at: string
 }
 

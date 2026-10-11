@@ -1,11 +1,12 @@
 /**
  * In-memory stand-in for the subset of the Supabase query builder used by the cron
- * helpers and the worker: select/update/insert/upsert with eq/in/gte/lt/is/order/limit and
- * maybeSingle(), awaited directly or via `.select()`. Embedded relations are stored on the
- * row itself (e.g. `podcast_subscriptions: { title, user_id }`).
+ * helpers and the worker: select/update/insert/upsert/delete with eq/in/gte/lt/is/order/limit
+ * and maybeSingle(), awaited directly or via `.select()`. Embedded relations are stored on the
+ * row itself (e.g. `podcast_subscriptions: { title, user_id }`). Writes return the written
+ * rows (`upsert` with `ignoreDuplicates` only the inserted ones, like ON CONFLICT DO NOTHING).
  *
- * `hooks.beforeUpdate(data, table, patch)` lets a test simulate a concurrent writer between
- * a read and the compare-and-swap write.
+ * `hooks.beforeUpdate(data, table, patch)` and `hooks.beforeInsert(data, table, records)` let a
+ * test simulate a concurrent writer between a read and the compare-and-swap write.
  */
 export function makeFakeSupabase(tables, hooks = {}) {
   const data = Object.fromEntries(
@@ -24,6 +25,7 @@ export function makeFakeSupabase(tables, hooks = {}) {
       const rows = data[table]
 
       if (kind === 'insert' || kind === 'upsert') {
+        if (hooks.beforeInsert) hooks.beforeInsert(data, table, [].concat(payload))
         const inserted = []
         const conflictColumns = options.onConflict ? options.onConflict.split(',').map((c) => c.trim()) : []
         for (const record of [].concat(payload)) {
@@ -44,7 +46,7 @@ export function makeFakeSupabase(tables, hooks = {}) {
           }
         }
         writes.push({ table, kind, payload })
-        return { data: inserted.map((row) => ({ id: row.id })), error: null }
+        return { data: inserted.map((row) => ({ ...row })), error: null }
       }
 
       if (kind === 'update' && hooks.beforeUpdate) hooks.beforeUpdate(data, table, payload)
@@ -54,6 +56,12 @@ export function makeFakeSupabase(tables, hooks = {}) {
         for (const row of matched) Object.assign(row, payload)
         writes.push({ table, kind, payload, ids: matched.map((row) => row.id) })
         return { data: matched.map((row) => ({ id: row.id })), error: null }
+      }
+
+      if (kind === 'delete') {
+        data[table] = rows.filter((row) => !matched.includes(row))
+        writes.push({ table, kind, ids: matched.map((row) => row.id) })
+        return { data: matched.map((row) => ({ ...row })), error: null }
       }
 
       if (order) {
@@ -92,6 +100,7 @@ export function makeFakeSupabase(tables, hooks = {}) {
         update: (patch) => builder(table, 'update', patch),
         insert: (record) => builder(table, 'insert', record),
         upsert: (record, options) => builder(table, 'upsert', record, options),
+        delete: () => builder(table, 'delete'),
       }
     },
   }

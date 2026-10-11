@@ -9,15 +9,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import type { Episode, PodcastSubscription, SourceType } from '@/types/database'
+import { deliveryPatchOf, deliveryTargetsOf, toggleDeliveryTarget } from '@/lib/newsletter/delivery-targets.mjs'
+import type { DeliveryTarget, Episode, PodcastSubscription, SourceType } from '@/types/database'
 import { SourceImage } from './SourceImage'
 
 type FailedEpisode = Pick<Episode, 'id' | 'subscription_id' | 'title' | 'status' | 'error_code' | 'error_message' | 'published_at'>
 
-export type SourcePatch = Partial<Pick<PodcastSubscription, 'title' | 'enabled' | 'delivery_mode'>>
+export type SourcePatch = Partial<Pick<PodcastSubscription, 'title' | 'enabled' | 'deliver_immediately' | 'deliver_daily'>>
 
 // error_code is written for YouTube videos and website articles; podcast failures fall back to
 // the generic text.
@@ -98,9 +99,18 @@ function SourceCard({
   const locale = useLocale()
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(source.title)
-  const selectId = `delivery-mode-${source.id}`
+  const [targetRequired, setTargetRequired] = useState(false)
+  const deliveryId = `delivery-${source.id}`
   const switchId = `enabled-${source.id}`
   const link = sourceLink(source)
+  const targets = deliveryTargetsOf(source)
+
+  // Kanban #43: immediate and daily are combinable; the last active one stays on.
+  function toggleTarget(target: DeliveryTarget, checked: boolean) {
+    const result = toggleDeliveryTarget(targets, target, checked)
+    setTargetRequired(!result.ok)
+    if (result.ok) onUpdate(source, deliveryPatchOf(result.targets))
+  }
 
   function formatDateTime(value: string) {
     return new Date(value).toLocaleString(locale === 'de' ? 'de-DE' : 'en-US', {
@@ -198,24 +208,31 @@ function SourceCard({
           />
           <Label htmlFor={switchId} className="text-sm font-normal">{t('enabledLabel')}</Label>
         </div>
-        <div className="flex items-center gap-2">
-          <Label htmlFor={selectId} className="text-sm text-muted-foreground font-normal">
-            {t('deliveryModeLabel')}
-          </Label>
-          <Select
-            value={source.delivery_mode === 'immediate' ? 'immediate' : 'daily'}
-            onValueChange={(value) => onUpdate(source, { delivery_mode: value === 'immediate' ? 'immediate' : 'daily' })}
-          >
-            <SelectTrigger id={selectId} className="h-8 w-auto min-w-44 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="daily">{t('deliveryModeDaily')}</SelectItem>
-              <SelectItem value="immediate">{t('deliveryModeImmediate')}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        <fieldset
+          className="flex flex-wrap items-center gap-x-4 gap-y-2"
+          aria-describedby={targetRequired ? `${deliveryId}-required` : undefined}
+        >
+          <legend className="float-left mr-1 text-sm text-muted-foreground">{t('deliveryModeLabel')}</legend>
+          {(['immediate', 'daily'] as const).map((target) => (
+            <div key={target} className="flex items-center gap-2">
+              <Checkbox
+                id={`${deliveryId}-${target}`}
+                checked={targets[target]}
+                onCheckedChange={(checked) => toggleTarget(target, checked === true)}
+              />
+              <Label htmlFor={`${deliveryId}-${target}`} className="text-sm font-normal">
+                {t(target === 'immediate' ? 'deliveryTargetImmediate' : 'deliveryTargetDaily')}
+              </Label>
+            </div>
+          ))}
+        </fieldset>
       </div>
+
+      {targetRequired && (
+        <p id={`${deliveryId}-required`} role="alert" className="text-sm text-destructive">
+          {t('deliveryTargetRequired')}
+        </p>
+      )}
 
       {failedEpisodes.length > 0 && (
         <div className="rounded-md border border-destructive/30 p-3 space-y-2">

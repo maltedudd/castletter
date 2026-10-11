@@ -6,7 +6,7 @@ import { getTranslations, getLocale } from 'next-intl/server'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { groupMailEpisodes, socialPostOf } from '@/lib/newsletter/archive.mjs'
+import { groupMailEpisodes, mailEpisodesOf, socialPostOf } from '@/lib/newsletter/archive.mjs'
 import { websiteSummary } from '@/lib/newsletter/digest.mjs'
 import type { SocialMedia } from '@/types/database'
 
@@ -140,17 +140,10 @@ export default async function ArchiveMailPage({ params }: PageProps) {
     notFound()
   }
 
-  // RLS limits newsletter_mails and episodes to the logged-in user's own rows.
-  const { data: mail, error } = await supabase
-    .from('newsletter_mails')
-    .select(
-      `
-      id,
-      user_id,
-      mode,
-      subject,
-      sent_at,
-      episodes (
+  // RLS limits newsletter_mails, newsletter_deliveries and episodes to the logged-in user's own
+  // rows. Episodes come through the mail's deliveries (Kanban #43: an episode can be in an
+  // immediate mail and a digest) and the legacy pointer of mails sent before that.
+  const EPISODE_COLUMNS = `
         id,
         title,
         audio_url,
@@ -160,8 +153,18 @@ export default async function ArchiveMailPage({ params }: PageProps) {
         social_spoiler,
         social_media,
         podcast_subscriptions ( title, cover_image_url ),
-        episode_newsletters ( intro, bullet_points, key_takeaways, action_items, quotes, speakers, reflection )
-      )
+        episode_newsletters ( intro, bullet_points, key_takeaways, action_items, quotes, speakers, reflection )`
+  const { data: mail, error } = await supabase
+    .from('newsletter_mails')
+    .select(
+      `
+      id,
+      user_id,
+      mode,
+      subject,
+      sent_at,
+      newsletter_deliveries ( episodes ( ${EPISODE_COLUMNS} ) ),
+      episodes!newsletter_mail_id ( ${EPISODE_COLUMNS} )
       `
     )
     .eq('id', id)
@@ -171,7 +174,7 @@ export default async function ArchiveMailPage({ params }: PageProps) {
     notFound()
   }
 
-  const groups = groupMailEpisodes(mail.episodes as MailEpisode[]) as { type: string; episodes: MailEpisode[] }[]
+  const groups = groupMailEpisodes(mailEpisodesOf(mail) as MailEpisode[]) as { type: string; episodes: MailEpisode[] }[]
   const episodeCount = groups.reduce((count, group) => count + group.episodes.length, 0)
   const showSections = mail.mode === 'daily'
   const EpisodeTitle = showSections ? 'h3' : 'h2'

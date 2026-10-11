@@ -18,11 +18,11 @@ const NOW = new Date('2026-10-06T07:30:00.000Z')
 const BOB_RSS = 'https://bob.example/@bob.rss'
 const BOB_ID = '42'
 
-function setup({ newsletters = true } = {}) {
+function setup({ newsletters = true, annaTargets = {} } = {}) {
   const db = makeFakeSupabase({
     podcast_subscriptions: [
       { id: 'anna', user_id: 'user-1', source_type: 'social', social_platform: 'mastodon', social_account_id: ACCOUNT_ID, feed_url: RSS_URL,
-        title: 'Anna Beispiel', enabled: true, delivery_mode: 'immediate', created_at: '2026-10-01T00:00:00.000Z' },
+        title: 'Anna Beispiel', enabled: true, delivery_mode: 'immediate', created_at: '2026-10-01T00:00:00.000Z', ...annaTargets },
       { id: 'bob', user_id: 'user-1', source_type: 'social', social_platform: 'mastodon', social_account_id: BOB_ID, feed_url: BOB_RSS,
         title: 'Bob', enabled: true, delivery_mode: 'daily', created_at: '2026-10-01T00:00:00.000Z' },
     ],
@@ -93,6 +93,21 @@ test('Social-Posts: Sofort-Mail direkt nach dem Feed-Check, Tages-Posts im Diges
   assert.ok(db.data.episodes.every((e) => e.status === 'newsletter_sent'))
   assert.equal(db.data.episode_newsletters.length, 0)
   assert.equal(db.data.newsletter_mails.length, 3)
+})
+
+test('Kanban #43: Social-Quelle mit Sofort + Daily – Sofort-Mails nach dem Feed-Check und dieselben Posts genau einmal im Digest', async () => {
+  const { db, deps, mails } = setup({ annaTargets: { deliver_immediately: true, deliver_daily: true } })
+
+  await runFeedCheck(deps)
+  await runFeedCheck(deps)
+  assert.deepEqual(mails.map((m) => m.mode), ['immediate', 'immediate'])
+
+  await runSendSweep(deps)
+  await runSendSweep(deps)
+
+  assert.deepEqual(mails.map((m) => m.mode), ['immediate', 'immediate', 'daily'])
+  assert.deepEqual(mails[2].items.map((i) => i.podcastTitle).sort(), ['Anna Beispiel', 'Anna Beispiel', 'Bob'])
+  assert.ok(db.data.episodes.every((e) => e.status === 'newsletter_sent'))
 })
 
 test('ohne Newsletter-Versand importiert der Feed-Check nur und verschickt nichts', async () => {

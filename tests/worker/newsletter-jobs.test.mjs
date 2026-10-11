@@ -25,10 +25,10 @@ function makeDeps(db, overrides = {}) {
   }
 }
 
-function tables({ mode = 'daily', hour = 7, episodes }) {
+function tables({ mode = 'daily', targets = {}, hour = 7, episodes }) {
   return {
     user_settings: [{ user_id: 'user-1', newsletter_email: 'malte@example.com', newsletter_delivery_hour: hour }],
-    podcast_subscriptions: [{ id: 'sub-1', title: 'Lage der Nation', user_id: 'user-1', delivery_mode: mode }],
+    podcast_subscriptions: [{ id: 'sub-1', title: 'Lage der Nation', user_id: 'user-1', delivery_mode: mode, ...targets }],
     episode_newsletters: [],
     episodes,
   }
@@ -102,6 +102,30 @@ test('a failing immediate send keeps the episode ready for the sweep', async () 
   assert.equal(result.outcome, 'ready')
   assert.equal(db.data.episodes[0].status, 'newsletter_ready')
   assert.ok(deps.logs.some((l) => l.msg === 'immediate_send_failed'))
+})
+
+test('Kanban #43: immediate + daily – mail right after generation, the same episode once more in the digest', async () => {
+  const db = makeFakeSupabase(tables({
+    mode: 'immediate', targets: { deliver_immediately: true, deliver_daily: true }, hour: 7, episodes: [transcribed('ep', 1)],
+  }))
+  withNewsletterJoin(db)
+  const deps = makeDeps(db)
+
+  await runGenerationOnce(deps)
+  assert.deepEqual(deps.mails.map((m) => m.mode), ['immediate'])
+  assert.equal(db.data.episodes[0].status, 'newsletter_ready')
+
+  const first = await runSendSweep(deps)
+  const second = await runSendSweep(deps)
+
+  assert.equal(first.mailsSent, 1)
+  assert.equal(second.mailsSent, 0)
+  assert.deepEqual(deps.mails.map((m) => [m.mode, m.items.map((i) => i.episodeTitle)]), [
+    ['immediate', ['Episode ep']],
+    ['daily', ['Episode ep']],
+  ])
+  assert.equal(db.data.episodes[0].status, 'newsletter_sent')
+  assert.deepEqual(db.data.newsletter_mails.map((m) => m.mode), ['immediate', 'daily'])
 })
 
 test('generation is idle without transcribed episodes', async () => {

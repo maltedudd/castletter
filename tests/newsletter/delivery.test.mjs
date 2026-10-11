@@ -6,7 +6,7 @@ import {
   isDailyDigestDue,
   buildNewsletterSubject,
   SENDING_LEASE_MS,
-  claimEpisodesForSending,
+  claimDeliveries,
   resetStaleSendingEpisodes,
   sendNewsletterToUser,
   deliverImmediatelyIfWanted,
@@ -222,11 +222,12 @@ test('no mail without subscriptions or ready episodes', async () => {
 
 test('an episode claimed by a concurrent run is never mailed twice', async () => {
   const db = makeDb([episode('a'), episode('b')], {
-    // Another run claims `a` between our read and claim.
-    beforeUpdate: (data, table, patch) => {
-      const a = data.episodes.find((e) => e.id === 'a')
-      if (table === 'episodes' && patch.status === 'newsletter_sending' && a.status === 'newsletter_ready') {
-        a.status = 'newsletter_sending'
+    // Another run claims the digest delivery of `a` between our read and claim.
+    beforeInsert: (data, table) => {
+      if (table !== 'newsletter_deliveries') return
+      data.newsletter_deliveries ??= []
+      if (!data.newsletter_deliveries.some((d) => d.episode_id === 'a')) {
+        data.newsletter_deliveries.push({ id: 'other-run', episode_id: 'a', target: 'daily', status: 'sending', claimed_at: NOW.toISOString() })
       }
     },
   })
@@ -236,7 +237,8 @@ test('an episode claimed by a concurrent run is never mailed twice', async () =>
 
   assert.deepEqual(result, { mailsSent: 1, episodesSent: 1 })
   assert.deepEqual(mails[0].items.map((i) => i.episodeTitle), ['Episode b'])
-  assert.equal(statusOf(db, 'a'), 'newsletter_sending')
+  assert.equal(statusOf(db, 'a'), 'newsletter_ready')
+  assert.equal(db.data.newsletter_deliveries.find((d) => d.episode_id === 'a').status, 'sending')
 })
 
 test('a failed send releases the claim so the episode is retried later', async () => {
@@ -249,16 +251,30 @@ test('a failed send releases the claim so the episode is retried later', async (
   )
   assert.equal(statusOf(db, 'a'), 'newsletter_ready')
   assert.equal(db.data.episodes[0].newsletter_sent_at, null)
+  assert.deepEqual(db.data.newsletter_deliveries, [])
+
+  const { mails, sendEmail: working } = recordingMailer()
+  await sendNewsletterToUser({ supabase: db, user: USER, sendEmail: working, now: NOW, recentCutoff: CUTOFF, includeDaily: true })
+  assert.equal(mails.length, 1)
+  assert.equal(statusOf(db, 'a'), 'newsletter_sent')
 })
 
-test('claimEpisodesForSending only claims ready episodes and stamps the claim time', async () => {
-  const db = makeFakeSupabase({ episodes: [episode('a'), episode('b', { status: 'newsletter_sent' })] })
+test('claimDeliveries claims each episode and target once and stamps the claim time', async () => {
+  const db = makeFakeSupabase({
+    newsletter_deliveries: [{ id: 'd1', user_id: 'user-1', episode_id: 'b', target: 'daily', status: 'sent', claimed_at: 'x' }],
+  })
 
-  const claimed = await claimEpisodesForSending(db, ['a', 'b'], NOW)
+  assert.deepEqual(await claimDeliveries(db, { userId: 'user-1', episodeIds: ['a', 'b'], target: 'daily', now: NOW }), ['a'])
+  assert.deepEqual(await claimDeliveries(db, { userId: 'user-1', episodeIds: ['a'], target: 'daily', now: NOW }), [])
+  // The other target of the same episode is independent.
+  assert.deepEqual(await claimDeliveries(db, { userId: 'user-1', episodeIds: ['a', 'b'], target: 'immediate', now: NOW }), ['a', 'b'])
+  assert.deepEqual(await claimDeliveries(db, { userId: 'user-1', episodeIds: [], target: 'immediate', now: NOW }), [])
 
-  assert.deepEqual(claimed, ['a'])
-  assert.equal(db.data.episodes[0].status, 'newsletter_sending')
-  assert.equal(db.data.episodes[0].newsletter_sent_at, NOW.toISOString())
+  const claim = db.data.newsletter_deliveries.find((d) => d.episode_id === 'a' && d.target === 'daily')
+  assert.deepEqual(
+    { user_id: claim.user_id, status: claim.status, claimed_at: claim.claimed_at },
+    { user_id: 'user-1', status: 'sending', claimed_at: NOW.toISOString() }
+  )
 })
 
 test('resetStaleSendingEpisodes frees claims older than the lease, keeps fresh ones', async () => {
@@ -266,19 +282,26 @@ test('resetStaleSendingEpisodes frees claims older than the lease, keeps fresh o
   const fresh = new Date(NOW.getTime() - 60_000).toISOString()
   const db = makeFakeSupabase({
     episodes: [
+      // Legacy episode claims from before Kanban #43.
       episode('stale', { status: 'newsletter_sending', newsletter_sent_at: stale }),
       episode('fresh', { status: 'newsletter_sending', newsletter_sent_at: fresh }),
       episode('sent', { status: 'newsletter_sent', newsletter_sent_at: stale }),
+    ],
+    newsletter_deliveries: [
+      { id: 'd-stale', episode_id: 'x', target: 'immediate', status: 'sending', claimed_at: stale },
+      { id: 'd-fresh', episode_id: 'x', target: 'daily', status: 'sending', claimed_at: fresh },
+      { id: 'd-sent', episode_id: 'y', target: 'daily', status: 'sent', claimed_at: stale },
     ],
   })
 
   const reset = await resetStaleSendingEpisodes(db, NOW)
 
-  assert.equal(reset, 1)
+  assert.equal(reset, 2)
   assert.equal(statusOf(db, 'stale'), 'newsletter_ready')
   assert.equal(db.data.episodes[0].newsletter_sent_at, null)
   assert.equal(statusOf(db, 'fresh'), 'newsletter_sending')
   assert.equal(statusOf(db, 'sent'), 'newsletter_sent')
+  assert.deepEqual(db.data.newsletter_deliveries.map((d) => d.id), ['d-fresh', 'd-sent'])
 })
 
 test('deliverImmediatelyIfWanted mails only episodes of immediate podcasts', async () => {

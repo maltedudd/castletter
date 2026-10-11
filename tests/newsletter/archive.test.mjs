@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { groupMailEpisodes, mailIdsOf, socialPostOf, sortMailEpisodes, toArchiveEntry } from '../../src/lib/newsletter/archive.mjs'
+import { groupMailEpisodes, mailEpisodesOf, mailIdsOf, socialPostOf, sortMailEpisodes, toArchiveEntry } from '../../src/lib/newsletter/archive.mjs'
 
 const ep = (id, published_at, title, cover = null) => ({ id, published_at, podcast_subscriptions: { title, cover_image_url: cover } })
 
@@ -80,4 +80,44 @@ test('socialPostOf re-sanitises the stored post and keeps only http(s) media; nu
   })
   assert.equal(socialPostOf({ source_type: 'podcast' }), null)
   assert.deepEqual(socialPostOf({ source_type: 'social', social_content: null, social_spoiler: null, social_media: null }), { html: '', spoiler: null, media: [] })
+})
+
+// ─── Kanban #43: an episode in an immediate mail and a digest ────────
+
+test('mailEpisodesOf merges delivery embeds and the legacy embed, unique by id', () => {
+  const a = ep('a', '2026-10-06T04:00:00Z', 'Hotel Matze')
+  const b = ep('b', '2026-10-06T05:00:00Z', 'Lage der Nation')
+  const mail = {
+    newsletter_deliveries: [{ episodes: a }, { episodes: [b] }, { episodes: null }],
+    episodes: [{ ...a }],
+  }
+  assert.deepEqual(mailEpisodesOf(mail).map((e) => e.id), ['a', 'b'])
+  assert.deepEqual(mailEpisodesOf({ episodes: [b] }).map((e) => e.id), ['b'], 'mails sent before #43')
+  assert.deepEqual(mailEpisodesOf({ newsletter_deliveries: [{ episodes: a }] }).map((e) => e.id), ['a'])
+  assert.deepEqual(mailEpisodesOf({}), [])
+})
+
+test('the same episode shows up in both its immediate mail and its digest entry', () => {
+  const a = ep('a', '2026-10-06T04:00:00Z', 'Hotel Matze', 'https://img/hm.png')
+  const b = ep('b', '2026-10-06T05:00:00Z', 'Lage der Nation')
+  const immediate = toArchiveEntry({
+    id: 'm1', mode: 'immediate', subject: 'Hotel Matze: Episode a', sent_at: '2026-10-06T06:00:00Z', episode_count: 1,
+    newsletter_deliveries: [{ episodes: a }], episodes: [],
+  })
+  // The legacy pointer of `a` moved on to the digest; that does not duplicate it there.
+  const digest = toArchiveEntry({
+    id: 'm2', mode: 'daily', subject: 'Deine neuen Podcast-Updates (2 Episoden)', sent_at: '2026-10-07T07:00:00Z', episode_count: 2,
+    newsletter_deliveries: [{ episodes: a }, { episodes: b }], episodes: [a],
+  })
+  assert.deepEqual([immediate.mode, immediate.sources, immediate.itemCount], ['immediate', ['Hotel Matze'], 1])
+  assert.deepEqual([digest.mode, digest.sources, digest.itemCount], ['daily', ['Hotel Matze', 'Lage der Nation'], 2])
+  assert.equal(toArchiveEntry({ id: 'm3', mode: 'daily', subject: 's', sent_at: 'x', newsletter_deliveries: [{ episodes: a }, { episodes: b }] }).itemCount, 2)
+})
+
+test('mailIdsOf collects mails from delivery rows and legacy episode rows', () => {
+  assert.deepEqual(
+    mailIdsOf([{ mail_id: 'm1' }, { mail_id: 'm2' }, { mail_id: null }], [{ newsletter_mail_id: 'm2' }, { newsletter_mail_id: 'm0' }]),
+    ['m1', 'm2', 'm0']
+  )
+  assert.deepEqual(mailIdsOf([], null), [])
 })
