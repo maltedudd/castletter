@@ -69,7 +69,7 @@ function DeleteSourceDialog({
 
 // ─── Sources Page ────────────────────────────────────────────────────
 
-/** Podcasts, YouTube channels, websites and Mastodon accounts as sources; stored in podcast_subscriptions (table name kept). */
+/** Podcasts, YouTube channels, websites and Mastodon/Bluesky accounts as sources; stored in podcast_subscriptions (table name kept). */
 export default function SubscriptionsPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()

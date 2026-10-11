@@ -2,7 +2,7 @@
 // source — podcast RSS feeds, YouTube channel Atom feeds and website RSS/Atom feeds — and
 // stores new episodes/videos/articles as `pending_transcription`, the common entry point of the
 // transcription/newsletter pipeline (website articles get their text there, without audio).
-// Social posts (Mastodon) skip that pipeline: they are stored unchanged as `newsletter_ready`.
+// Social posts (Mastodon, Bluesky) skip that pipeline: they are stored unchanged as `newsletter_ready`.
 // Fetch, XML parser and Supabase client are injected so the rules run under node:test.
 
 import crypto from 'node:crypto'
@@ -14,7 +14,8 @@ import {
   YOUTUBE_REQUEST_HEADERS,
 } from '../youtube/channel.mjs'
 import { getItemLink, getItemText } from '../websites/feed.mjs'
-import { fetchMastodonPosts, isImportablePost } from '../social/mastodon.mjs'
+import { isImportablePost } from '../social/mastodon.mjs'
+import { fetchSocialPosts } from '../social/platforms.mjs'
 import { sanitizeSocialHtml, socialPostText, socialPostTitle } from '../social/sanitize.mjs'
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
@@ -40,7 +41,7 @@ const APPROXIMATE_DATE_MARGIN_MS = 48 * 60 * 60 * 1000
 export async function checkAllFeeds({ supabase, fetchImpl = fetch, parseXml, now = () => new Date(), youtubeFallback = null }) {
   const { data: rows, error } = await supabase
     .from('podcast_subscriptions')
-    .select('id, user_id, feed_url, title, created_at, source_type, youtube_channel_id, social_account_id, enabled')
+    .select('id, user_id, feed_url, title, created_at, source_type, youtube_channel_id, social_platform, social_handle, social_account_id, enabled')
     .limit(MAX_SUBSCRIPTIONS)
   if (error || !rows) {
     throw new Error(`Failed to fetch subscriptions: ${error?.message ?? 'no data'}`)
@@ -207,14 +208,17 @@ async function checkYouTubeChannel({ supabase, fetchImpl, subscription, now, you
 }
 
 /**
- * Social account (Mastodon): public posts from the API, or the RSS feed as fallback (then a
- * `note`). New posts are stored unchanged and sanitised as `newsletter_ready`, so neither
- * transcription nor newsletter generation ever touches them; delivery mails them as they are.
+ * Social account (Mastodon, Bluesky): public posts from the platform API, or the RSS feed as
+ * fallback (then a `note`). New posts are stored unchanged and sanitised as `newsletter_ready`,
+ * so neither transcription nor newsletter generation ever touches them; delivery mails them as
+ * they are. A changed handle reported by the platform (Bluesky reads by DID) is stored too.
  */
 async function checkSocialAccount({ supabase, fetchImpl, parseXml, subscription, now }) {
   let result
+  let handleUpdate = {}
   try {
-    const { posts, note } = await fetchMastodonPosts({ subscription, fetchImpl, parseXml })
+    const { posts, note, handle } = await fetchSocialPosts({ subscription, fetchImpl, parseXml })
+    if (handle && handle !== subscription.social_handle) handleUpdate = { social_handle: handle }
 
     const { data: existingEpisodes, error: existingError } = await supabase
       .from('episodes')
@@ -240,16 +244,17 @@ async function checkSocialAccount({ supabase, fetchImpl, parseXml, subscription,
       ? { subscription_id: subscription.id, status: 'error', error_message: result.error }
       : { subscription_id: subscription.id, status: 'success', episodes_found: result.newEpisodes, ...(result.note ? { error_message: result.note } : {}) }
   )
-  await persistCheckResult({ supabase, subscription, now, error: result.error })
+  await persistCheckResult({ supabase, subscription, now, error: result.error, patch: handleUpdate })
 
   return result
 }
 
-/** Stores the latest check result on the source itself, so the sources UI can show it. */
-async function persistCheckResult({ supabase, subscription, now, error }) {
+/** Stores the latest check result (plus `patch`) on the source itself, so the sources UI can show it. */
+async function persistCheckResult({ supabase, subscription, now, error, patch = {} }) {
   await supabase
     .from('podcast_subscriptions')
     .update({
+      ...patch,
       last_checked_at: now.toISOString(),
       last_check_status: error ? 'error' : 'success',
       last_check_error: error ?? null,

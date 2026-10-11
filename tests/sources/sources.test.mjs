@@ -32,7 +32,7 @@ function makeFetch(routes) {
 
 // ─── Source type selection ───────────────────────────────────────────
 
-test('source types are podcast RSS, YouTube channel, website RSS and social (Mastodon)', () => {
+test('source types are podcast RSS, YouTube channel, website RSS and social (Mastodon, Bluesky)', () => {
   assert.deepEqual(SOURCE_TYPES, ['podcast', 'youtube', 'website', 'social'])
   assert.equal(isSourceType('social'), true)
   assert.equal(isSourceType('podcast'), true)
@@ -398,6 +398,25 @@ test('social: error keys from the API, fallback key and the social-specific dupl
   const supabase = { from: () => ({ insert: async () => ({ error: { code: '23505', message: 'duplicate' } }) }) }
   const preview = { type: 'social', title: 'A', description: null, imageUrl: null, feedUrl: 'https://social.example/@anna.rss', channelId: null, socialPlatform: 'mastodon', socialHandle: 'anna@social.example', socialAccountId: null }
   assert.deepEqual(await saveSource({ supabase, userId: USER_ID, preview }), { ok: false, errorKey: 'socialErrorAlreadyAdded' })
+})
+
+// ─── Kanban #40: social (Bluesky) ────────────────────────────────────
+
+test('social: a Bluesky account is stored with its DID as account ID and the DID-based feed', async () => {
+  const did = 'did:plc:abcdefghijklmnopqrstuvwx'
+  const api = { title: 'Anna', description: null, imageUrl: null, feedUrl: `https://bsky.app/profile/${did}/rss`, handle: 'anna.bsky.social', accountId: did, platform: 'bluesky' }
+  const { fetchImpl, calls } = makeFetch({ '/api/social/resolve': jsonResponse(api) })
+  const resolved = await resolveSourcePreview({ type: 'social', input: ' https://bsky.app/profile/anna.bsky.social ', fetchImpl })
+  assert.deepEqual(calls, [{ url: '/api/social/resolve', method: 'POST', body: { input: 'https://bsky.app/profile/anna.bsky.social' } }])
+
+  const supabase = makeFakeSupabase({ podcast_subscriptions: [] })
+  assert.deepEqual(await saveSource({ supabase, userId: USER_ID, preview: resolved.preview }), { ok: true })
+  const row = supabase.data.podcast_subscriptions[0]
+  assert.equal(row.source_type, 'social')
+  assert.equal(row.social_platform, 'bluesky')
+  assert.equal(row.social_handle, 'anna.bsky.social')
+  assert.equal(row.social_account_id, did)
+  assert.equal(row.feed_url, `https://bsky.app/profile/${did}/rss`)
 })
 
 test('buildSourceInsert keeps podcast, YouTube and website rows free of social columns', () => {

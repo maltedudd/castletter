@@ -1,5 +1,5 @@
-// Every translation key of the social (Mastodon) flow exists in German and English, and the
-// migration extends the type constraints backwards-compatibly.
+// Every translation key of the social (Mastodon, Bluesky) flow exists in German and English, and
+// the migrations extend the type constraints backwards-compatibly.
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -13,11 +13,11 @@ const messages = { de: JSON.parse(read('messages/de.json')), en: JSON.parse(read
 
 test('alle Schlüssel des Social-Flows sind in DE und EN übersetzt', () => {
   const sources = [
-    'src/lib/social/mastodon.mjs', 'src/lib/sources/sources.mjs', 'src/app/api/social/resolve/route.ts',
+    'src/lib/social/mastodon.mjs', 'src/lib/social/bluesky.mjs', 'src/lib/social/platforms.mjs', 'src/lib/sources/sources.mjs', 'src/app/api/social/resolve/route.ts',
     'src/app/subscriptions/AddSourceForm.tsx', 'src/app/subscriptions/SourceList.tsx', 'src/app/subscriptions/page.tsx',
   ].map(read).join('\n')
-  const keys = [...new Set(sources.match(/\b(social[A-Z]\w+|sourceTypeSocial\w+|typeBadgeSocial|suggestSocialButton|failedPost\w*|deleteDescriptionSocial)\b/g))]
-    .filter((key) => !['socialAccountId', 'socialHandle', 'socialPlatform', 'socialUserIds', 'socialPost'].includes(key))
+  const keys = [...new Set(sources.match(/\b(social[A-Z]\w+|sourceTypeSocial\w+|typeBadgeSocial|suggestSocialButton|typeBadgeBluesky|failedPost\w*|deleteDescriptionSocial)\b/g))]
+    .filter((key) => !['socialAccountId', 'socialHandle', 'socialPlatform', 'socialUserIds', 'socialPost', 'socialProfileUrl'].includes(key))
   assert.ok(keys.length >= 18, `zu wenige Schlüssel gefunden: ${keys.length}`)
   for (const locale of ['de', 'en']) {
     for (const key of keys) {
@@ -44,4 +44,35 @@ test('Migration erweitert die Quelltypen um social und hält andere Typen frei v
   // Only nullable additions; nothing is dropped except the constraints that get replaced.
   assert.doesNotMatch(sql, /DROP (TABLE|COLUMN)|NOT NULL/)
   assert.match(sql, /ADD COLUMN IF NOT EXISTS social_content TEXT/)
+})
+
+test('Bluesky-Migration erweitert nur den Social-Constraint und lässt Mastodon unverändert', () => {
+  const mastodon = read('supabase/migrations/20261009_add_mastodon_social_sources.sql')
+  const sql = read('supabase/migrations/20261012_add_bluesky_social_sources.sql')
+  const mastodonCondition = `social_platform = 'mastodon'\n      AND social_handle ~ '^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$'\n      AND feed_url ~ '^https://')`
+  assert.ok(mastodon.includes(mastodonCondition))
+  assert.ok(sql.includes(mastodonCondition))
+  assert.match(sql, /social_platform = 'bluesky'\s+AND social_account_id ~ '\^did:\(plc:\[a-z2-7\]\{24\}\|web:\[a-z0-9.-\]\+\)\$'/)
+  assert.match(sql, /feed_url = 'https:\/\/bsky\.app\/profile\/' \|\| social_account_id \|\| '\/rss'/)
+  assert.match(sql, /source_type <> 'social'\s+AND social_platform IS NULL AND social_handle IS NULL AND social_account_id IS NULL/)
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS podcast_subscriptions_social_columns_check/)
+  // Only the social constraint is replaced; tables, columns, type constraints and posts stay.
+  assert.doesNotMatch(sql, /DROP (TABLE|COLUMN)|NOT NULL|ADD COLUMN|_source_type_check|ALTER TABLE episodes/)
+})
+
+test('die Constraint-Muster der Bluesky-Migration passen zu den Werten, die die App speichert', async () => {
+  const { resolveBlueskyAccount, buildBlueskyProfileUrl } = await import('../../src/lib/social/bluesky.mjs')
+  const { fakeFetch } = await import('../helpers/mastodon-fixtures.mjs')
+  const { profile, DID } = await import('../helpers/bluesky-fixtures.mjs')
+  const sql = read('supabase/migrations/20261012_add_bluesky_social_sources.sql')
+  const didPattern = new RegExp(/social_account_id ~ '([^']+)'/.exec(sql)[1])
+  const handlePattern = new RegExp(/social_platform = 'bluesky'[\s\S]*?social_handle ~ '([^']+)'/.exec(sql)[1])
+  const lookup = async () => [{ address: '93.184.216.34', family: 4 }]
+  for (const [handle, did] of [['anna.bsky.social', DID], ['handle.invalid', DID], ['anna.example.org', 'did:web:anna.example.org']]) {
+    const fetchImpl = fakeFetch({ [buildBlueskyProfileUrl('anna.bsky.social')]: { json: profile({ handle, did }) } })
+    const { preview } = await resolveBlueskyAccount({ input: 'anna.bsky.social', fetchImpl, lookup, parseXml: async () => null })
+    assert.match(preview.accountId, didPattern)
+    assert.match(preview.handle, handlePattern)
+    assert.equal(preview.feedUrl, `https://bsky.app/profile/${preview.accountId}/rss`)
+  }
 })

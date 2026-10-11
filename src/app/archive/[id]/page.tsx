@@ -79,6 +79,7 @@ const MEDIA_LABEL_KEYS: Record<string, string> = {
   video: 'mediaVideo',
   audio: 'mediaAudio',
   link: 'mediaLink',
+  quote: 'mediaQuote',
 }
 
 const SOURCE_PLACEHOLDERS: Record<string, string> = { website: '🌐', youtube: '▶️', social: '💬' }

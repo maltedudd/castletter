@@ -113,7 +113,7 @@ const strings = {
     socialSectionNote: 'Unverändert weitergeleitet, ohne Zusammenfassung.',
     contentWarning: 'Inhaltswarnung',
     viewPostButton: 'Beitrag ansehen',
-    mediaLabels: { image: 'Bild', gifv: 'GIF', video: 'Video', audio: 'Audio', link: 'Link', unknown: 'Anhang' },
+    mediaLabels: { image: 'Bild', gifv: 'GIF', video: 'Video', audio: 'Audio', link: 'Link', quote: 'Zitierter Beitrag', unknown: 'Anhang' },
   },
   en: {
     subject: 'Your new podcast updates',
@@ -156,7 +156,7 @@ const strings = {
     socialSectionNote: 'Passed on unchanged, without summary.',
     contentWarning: 'Content warning',
     viewPostButton: 'View post',
-    mediaLabels: { image: 'Image', gifv: 'GIF', video: 'Video', audio: 'Audio', link: 'Link', unknown: 'Attachment' },
+    mediaLabels: { image: 'Image', gifv: 'GIF', video: 'Video', audio: 'Audio', link: 'Link', quote: 'Quoted post', unknown: 'Attachment' },
   },
 }
 

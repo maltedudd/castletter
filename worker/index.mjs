@@ -1,5 +1,5 @@
 // Castletter worker: (if enabled) imports new episodes/videos/articles/posts from the podcast
-// feeds, YouTube channels, website feeds and Mastodon accounts, polls Supabase for pending episodes and transcribes them
+// feeds, YouTube channels, website feeds and Mastodon/Bluesky accounts, polls Supabase for pending episodes and transcribes them
 // completely (YouTube: captions first, full-audio STT fallback; websites: public full text
 // without audio), then (if enabled)
 // generates their newsletters and sends them — without the Vercel function time limit.

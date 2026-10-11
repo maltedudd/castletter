@@ -45,11 +45,11 @@ export interface UserSettingsUpdate {
 }
 
 // PROJ-2: Podcast Subscriptions (Kanban #29: also YouTube channel sources, #35: website RSS,
-// #39: Mastodon accounts as social sources)
+// #39: Mastodon accounts as social sources, #40: Bluesky accounts)
 
 export type SourceType = 'podcast' | 'youtube' | 'website' | 'social'
 
-export type SocialPlatform = 'mastodon'
+export type SocialPlatform = 'mastodon' | 'bluesky'
 
 export interface PodcastSubscription {
   id: string
@@ -58,7 +58,10 @@ export interface PodcastSubscription {
   /** RSS feed for podcasts, RSS/Atom feed for websites, the account's RSS feed for social sources; for YouTube the channel's Atom feed (built from youtube_channel_id) */
   feed_url: string
   youtube_channel_id: string | null
-  /** Social only: platform, handle (user@instance) and account ID for the public API (null: RSS only) */
+  /**
+   * Social only: platform, handle and account ID for the public API. Mastodon: user@instance and
+   * the instance's account ID (null: RSS only); Bluesky: current handle and the DID (stable ID).
+   */
   social_platform: SocialPlatform | null
   social_handle: string | null
   social_account_id: string | null
@@ -117,15 +120,15 @@ export interface WebsiteFeedMeta {
   contentMode: 'full_text' | 'excerpt' | 'empty'
 }
 
-/** Resolved Mastodon account returned by the /api/social/resolve endpoint */
+/** Resolved Mastodon or Bluesky account returned by the /api/social/resolve endpoint */
 export interface SocialAccountMeta {
   title: string
   description: string | null
   imageUrl: string | null
-  /** The account's public RSS feed; identifies the source */
+  /** The account's public RSS feed (Bluesky: built from the DID); identifies the source */
   feedUrl: string
   handle: string
-  /** null when the instance API is not public and the account was resolved via RSS */
+  /** Mastodon: null when the instance API is not public and the account was resolved via RSS; Bluesky: the DID */
   accountId: string | null
   platform: SocialPlatform
 }

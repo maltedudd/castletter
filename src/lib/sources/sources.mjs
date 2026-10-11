@@ -1,11 +1,11 @@
 // Sources: podcast RSS feeds, YouTube channels, website RSS/Atom feeds and social accounts
-// (Mastodon) are source types of one product. This module holds the type-independent "add source" flow (type selection →
+// (Mastodon, Bluesky) are source types of one product. This module holds the type-independent "add source" flow (type selection →
 // type-specific input → preview → save) so the UI stays thin and the flow is testable with
 // node:test.
 //
 // The type-specific technical steps stay separate: podcasts are validated by
 // /api/podcasts/validate, channels resolved by /api/youtube/resolve, website feeds validated
-// by /api/websites/validate, Mastodon accounts resolved by /api/social/resolve, and all are
+// by /api/websites/validate, Mastodon and Bluesky accounts resolved by /api/social/resolve, and all are
 // stored in the existing podcast_subscriptions table.
 
 /** @typedef {'podcast' | 'youtube' | 'website' | 'social'} SourceType */
@@ -21,7 +21,7 @@
  *   channelId: string | null
  *   feedFormat?: 'rss' | 'atom'
  *   contentMode?: 'full_text' | 'excerpt' | 'empty'
- *   socialPlatform?: 'mastodon'
+ *   socialPlatform?: 'mastodon' | 'bluesky'
  *   socialHandle?: string
  *   socialAccountId?: string | null
  * }} SourcePreview
