@@ -13,6 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { deliveryPatchOf, deliveryTargetsOf, toggleDeliveryTarget } from '@/lib/newsletter/delivery-targets.mjs'
+import { socialProfileUrl } from '@/lib/social/platforms.mjs'
 import type { DeliveryTarget, Episode, PodcastSubscription, SourceType } from '@/types/database'
 import { SourceImage } from './SourceImage'
 
@@ -50,14 +51,14 @@ function sourceLink(source: PodcastSubscription) {
     return { href: `https://www.youtube.com/channel/${source.youtube_channel_id}`, text: source.youtube_channel_id ?? '' }
   }
   if (source.source_type === 'social' && source.social_handle) {
-    // feed_url is the profile's RSS feed (https://<instance>/@<user>.rss).
-    return { href: source.feed_url.replace(/\.rss$/, ''), text: `@${source.social_handle}` }
+    return { href: socialProfileUrl(source), text: `@${source.social_handle}` }
   }
   return { href: source.feed_url, text: source.feed_url }
 }
 
 function typeInfo(source: PodcastSubscription) {
-  return TYPE_BADGES[source.source_type] ?? TYPE_BADGES.podcast
+  const info = TYPE_BADGES[source.source_type] ?? TYPE_BADGES.podcast
+  return source.source_type === 'social' && source.social_platform === 'bluesky' ? { ...info, label: 'typeBadgeBluesky' } : info
 }
 
 function SourceTypeBadge({ source }: { source: PodcastSubscription }) {
@@ -259,7 +260,7 @@ function SourceCard({
 
 // ─── Source List ─────────────────────────────────────────────────────
 
-/** All sources of the user (podcasts, YouTube channels, websites, Mastodon accounts) with the same actions. */
+/** All sources of the user (podcasts, YouTube channels, websites, Mastodon/Bluesky accounts) with the same actions. */
 export function SourceList({
   sources,
   onUpdate,

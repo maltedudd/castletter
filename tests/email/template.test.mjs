@@ -305,6 +305,16 @@ test('media and link previews are listed as links, never loaded as images', () =
   assert.match(text, /Video – https:\/\/files\.social\.example\/v\.mp4/)
 })
 
+test('Kanban #40: a quoted Bluesky post is listed as a link labelled as quote, in both languages', () => {
+  const quote = { type: 'quote', url: 'https://bsky.app/profile/did:plc:zyxwvutsrqponmlkjihgfedc/post/3kq', previewUrl: null, description: '@bob.example.org' }
+  const bluesky = post('5', { audioUrl: 'https://bsky.app/profile/did:plc:abcdefghijklmnopqrstuvwx/post/3ka', social: { html: '<p>Zitat</p>', spoiler: null, media: [quote] } })
+  const html = generateEmailHTML('m@x.de', [bluesky], 'https://s', 'de', 'immediate')
+  assert.match(html, /<a href="https:\/\/bsky\.app\/profile\/did:plc:zyxwvutsrqponmlkjihgfedc\/post\/3kq"[^>]*>Zitierter Beitrag: @bob\.example\.org<\/a>/)
+  assert.match(html, /href="https:\/\/bsky\.app\/profile\/did:plc:abcdefghijklmnopqrstuvwx\/post\/3ka"[^>]*>[\s\S]*Beitrag ansehen/)
+  const text = generateEmailPlainText([bluesky], 'https://s', 'en', 'immediate')
+  assert.match(text, /Quoted post: @bob\.example\.org – https:\/\/bsky\.app\/profile\/did:plc:zyxwvutsrqponmlkjihgfedc\/post\/3kq/)
+})
+
 test('daily digest: summaries first, then social posts in their own section', () => {
   const items = [...DIGEST, post('s1', { publishedAt: '2026-10-07T00:30:00.000Z' })]
   const html = generateEmailHTML('m@x.de', items, 'https://s', 'de', 'daily', OVERVIEW)

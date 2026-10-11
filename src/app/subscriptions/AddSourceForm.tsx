@@ -257,10 +257,12 @@ export function AddSourceForm({ onAdded }: { onAdded: (preview: SourcePreview) =
                 )}
                 {preview.type === 'social' && preview.socialHandle && (
                   <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                    <dt className="text-muted-foreground">{t('socialPlatformLabel')}</dt>
+                    <dd>{preview.socialPlatform === 'bluesky' ? 'Bluesky' : 'Mastodon'}</dd>
                     <dt className="text-muted-foreground">{t('socialHandleLabel')}</dt>
                     <dd className="font-mono break-all">@{preview.socialHandle}</dd>
                     <dt className="text-muted-foreground">{t('socialAccessLabel')}</dt>
-                    <dd>{t(preview.socialAccountId ? 'socialAccessApi' : 'socialAccessRss')}</dd>
+                    <dd>{t(preview.socialPlatform === 'bluesky' ? 'socialAccessBluesky' : preview.socialAccountId ? 'socialAccessApi' : 'socialAccessRss')}</dd>
                   </dl>
                 )}
               </div>
