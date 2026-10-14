@@ -3,7 +3,7 @@
  * Uses inline styles for maximum email client compatibility
  */
 
-import { digestSourceType, groupDigestItems, hasSummaryContent, isPodcastOnly, MIN_OVERVIEW_ITEMS, websiteSummary } from '../newsletter/digest.mjs'
+import { digestSourceType, groupDigestByCategory, groupDigestItems, hasCategories, hasSummaryContent, isPodcastOnly, MIN_OVERVIEW_ITEMS, websiteSummary } from '../newsletter/digest.mjs'
 import { safeHttpUrl, sanitizeSocialHtml, socialPostText } from '../social/sanitize.mjs'
 
 /**
@@ -22,6 +22,7 @@ import { safeHttpUrl, sanitizeSocialHtml, socialPostText } from '../social/sanit
  * @property {string} [id]
  * @property {string | null} [publishedAt]
  * @property {SocialPost} [social]  Social posts only: the original post, never summarised
+ * @property {{ id: string, name: string, position: number } | null} [category]  The user's category of the source (Kanban #48)
  */
 
 /**
@@ -98,6 +99,7 @@ const strings = {
     digestHeaderTagline: 'Dein täglicher Überblick über deine Quellen',
     digestGreetingBody: 'hier ist das Neue aus deinen Quellen:',
     sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'Weitere Inhalte' },
+    moreSources: 'Weitere Quellen',
     overviewSources: 'Quellen',
     overviewLabel: 'Überblick',
     overviewTitle: (count) => `Das Wichtigste aus ${count} Inhalten`,
@@ -141,6 +143,7 @@ const strings = {
     digestHeaderTagline: 'Your daily overview of your sources',
     digestGreetingBody: 'here is what is new from your sources:',
     sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'More items' },
+    moreSources: 'More sources',
     overviewSources: 'Sources',
     overviewLabel: 'Overview',
     overviewTitle: (count) => `The essentials from ${count} items`,
@@ -252,6 +255,20 @@ function itemSections(newsletters, mode) {
     : [{ type: null, items: newsletters }]
 }
 
+/**
+ * The single items in groups. A digest with user categories (Kanban #48) has one group per
+ * non-empty category – heading is its name, uncategorised sources last under "more sources" –
+ * each holding its type sections; any other mail is one group without heading (see
+ * itemSections), rendered exactly as before categories existed.
+ */
+function itemGroups(newsletters, mode, s) {
+  if (isDigest(newsletters, mode) && hasCategories(newsletters)) {
+    return groupDigestByCategory(newsletters)
+      .map(({ category, sections }) => ({ heading: category ? category.name : s.moreSources, sections }))
+  }
+  return [{ heading: null, sections: itemSections(newsletters, mode) }]
+}
+
 
 export function generateEmailHTML(
   userEmail,
@@ -264,8 +281,10 @@ export function generateEmailHTML(
   const s = strings[locale]
   const intro = getIntro(s, newsletters, mode)
   const overviewBlock = generateOverviewBlock(visibleOverview(newsletters, mode, overview), s)
-  const episodeBlocks = itemSections(newsletters, mode)
-    .map(({ type, items }) => sectionHeading(type, s) + items.map((item) => generateItemBlock(item, s)).join(''))
+  const episodeBlocks = itemGroups(newsletters, mode, s)
+    .map(({ heading, sections }) => (heading ? generateCategoryHeading(heading) : '') + sections
+      .map(({ type, items }) => sectionHeading(type, s, heading ? 3 : 2) + items.map((item) => generateItemBlock(item, s)).join(''))
+      .join(''))
     .join('')
 
   return `<!DOCTYPE html>
@@ -374,12 +393,30 @@ function generateOverviewBlock(overview, s) {
     </tr>`
 }
 
-function generateSectionHeading(title) {
+/** Heading of a user category (Kanban #48); the type sections below it are sub-headings. */
+function generateCategoryHeading(title) {
+  return `
+    <!-- Category: ${escapeHtml(title)} -->
+    <tr>
+      <td style="padding: 36px 30px 0;">
+        <h2 style="margin: 0; padding: 10px 14px; border-radius: 6px; background-color: ${COLORS.primary}; color: ${COLORS.bg}; font-size: 22px; font-weight: 700;">${escapeHtml(title)}</h2>
+      </td>
+    </tr>`
+}
+
+/** Section title: a top-level h2, or an h3 below a category heading. */
+function sectionTitleHtml(title, level) {
+  return level === 3
+    ? `<h3 style="margin: 0; padding-bottom: 4px; border-bottom: 2px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 17px; font-weight: 700;">${escapeHtml(title)}</h3>`
+    : `<h2 style="margin: 0; padding-bottom: 6px; border-bottom: 3px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(title)}</h2>`
+}
+
+function generateSectionHeading(title, level = 2) {
   return `
     <!-- Section: ${escapeHtml(title)} -->
     <tr>
-      <td style="padding: 30px 30px 0;">
-        <h2 style="margin: 0; padding-bottom: 6px; border-bottom: 3px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(title)}</h2>
+      <td style="padding: ${level === 3 ? '20px' : '30px'} 30px 0;">
+        ${sectionTitleHtml(title, level)}
       </td>
     </tr>`
 }
@@ -393,9 +430,9 @@ function generateIntroHtml(item, s) {
 }
 
 /** Section heading of a digest section; Social keeps its heading with the "unchanged" note (#39). */
-function sectionHeading(type, s) {
+function sectionHeading(type, s, level = 2) {
   if (!type) return ''
-  return type === 'social' ? generateSocialSectionHeading(s) : generateSectionHeading(s.sections[type])
+  return type === 'social' ? generateSocialSectionHeading(s, level) : generateSectionHeading(s.sections[type], level)
 }
 
 /** Website articles compact, social posts unchanged, podcasts and videos in full. */
@@ -468,12 +505,12 @@ function generateEpisodeBlock(item, s) {
     </tr>`
 }
 
-function generateSocialSectionHeading(s) {
+function generateSocialSectionHeading(s, level = 2) {
   return `
     <!-- Section: Social -->
     <tr>
-      <td style="padding: 30px 30px 0;">
-        <h2 style="margin: 0; padding-bottom: 6px; border-bottom: 3px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.socialSection)}</h2>
+      <td style="padding: ${level === 3 ? '20px' : '30px'} 30px 0;">
+        ${sectionTitleHtml(s.socialSection, level)}
         <p style="margin: 6px 0 0; color: ${COLORS.textMuted}; font-size: 13px;">${escapeHtml(s.socialSectionNote)}</p>
       </td>
     </tr>`
@@ -552,9 +589,12 @@ export function generateEmailPlainText(
   const intro = getIntro(s, newsletters, mode)
   const overviewText = generateOverviewPlainText(visibleOverview(newsletters, mode, overview), s)
 
-  const blocks = itemSections(newsletters, mode).flatMap(({ type, items }) => [
-    ...(type === 'social' ? [`▬▬ ${s.socialSection.toUpperCase()} ▬▬\n(${s.socialSectionNote})`] : type ? [`▬▬ ${s.sections[type].toUpperCase()} ▬▬`] : []),
-    ...items.map((item) => generatePlainTextItem(item, s)),
+  const blocks = itemGroups(newsletters, mode, s).flatMap(({ heading, sections }) => [
+    ...(heading ? [`■■ ${heading} ■■`] : []),
+    ...sections.flatMap(({ type, items }) => [
+      ...(type === 'social' ? [`▬▬ ${s.socialSection.toUpperCase()} ▬▬\n(${s.socialSectionNote})`] : type ? [`▬▬ ${s.sections[type].toUpperCase()} ▬▬`] : []),
+      ...items.map((item) => generatePlainTextItem(item, s)),
+    ]),
   ])
 
   return `${intro.title}

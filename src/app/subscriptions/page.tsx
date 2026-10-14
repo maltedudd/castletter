@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useTranslations } from 'next-intl'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import { deliveryTargetsOf } from '@/lib/newsletter/delivery-targets.mjs'
+import { moveCategory, sortCategories } from '@/lib/sources/categories.mjs'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -18,8 +19,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { PodcastSubscription, SourceType } from '@/types/database'
+import type { PodcastSubscription, SourceCategory, SourceType } from '@/types/database'
 import { AddSourceForm } from './AddSourceForm'
+import { CategoryManager, type CategoryNameError } from './CategoryManager'
 import { SourceList, type SourcePatch } from './SourceList'
 
 // ─── Delete Dialog ───────────────────────────────────────────────────
@@ -77,6 +79,9 @@ export default function SubscriptionsPage() {
   const t = useTranslations('subscriptions')
 
   const [sources, setSources] = useState<PodcastSubscription[]>([])
+  const [categories, setCategories] = useState<SourceCategory[]>([])
+  // Reorders are sent one after another, so quick repeated moves reach the database in order.
+  const reorderQueue = useRef<Promise<unknown>>(Promise.resolve())
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<PodcastSubscription | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -98,6 +103,28 @@ export default function SubscriptionsPage() {
     setLoading(false)
   }, [user, supabase])
 
+  // Kanban #48: the user's own categories (RLS: own rows only).
+  const loadCategories = useCallback(async () => {
+    if (!user) return
+    const { data, error } = await supabase
+      .from('source_categories')
+      .select('*')
+      .eq('user_id', user.id)
+    if (error) {
+      setErrorMessage(t('categoryErrorLoad'))
+      return
+    }
+    setCategories(sortCategories((data ?? []) as SourceCategory[]))
+  }, [user, supabase, t])
+
+  const sourceCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const source of sources) {
+      if (source.category_id) counts.set(source.category_id, (counts.get(source.category_id) ?? 0) + 1)
+    }
+    return counts
+  }, [sources])
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login')
@@ -107,8 +134,9 @@ export default function SubscriptionsPage() {
   useEffect(() => {
     if (user) {
       loadSources()
+      loadCategories()
     }
-  }, [user, loadSources])
+  }, [user, loadSources, loadCategories])
 
   // Auto-hide success messages
   useEffect(() => {
@@ -126,6 +154,7 @@ export default function SubscriptionsPage() {
   async function handleUpdate(source: PodcastSubscription, patch: SourcePatch) {
     setErrorMessage(null)
     const isDeliveryPatch = patch.deliver_immediately !== undefined || patch.deliver_daily !== undefined
+    const isCategoryPatch = patch.category_id !== undefined
     // Optimistic update; reverted if saving fails.
     setSources((prev) => prev.map((s) => (s.id === source.id ? { ...s, ...patch } : s)))
 
@@ -136,12 +165,17 @@ export default function SubscriptionsPage() {
 
     if (error) {
       setSources((prev) => prev.map((s) => (s.id === source.id ? source : s)))
-      setErrorMessage(t(isDeliveryPatch ? 'errorSaveDeliveryMode' : 'errorSave'))
+      setErrorMessage(t(isDeliveryPatch ? 'errorSaveDeliveryMode' : isCategoryPatch ? 'errorSaveCategory' : 'errorSave'))
       return false
     }
 
     const title = patch.title ?? source.title
-    if (isDeliveryPatch) {
+    if (isCategoryPatch) {
+      const category = categories.find((c) => c.id === patch.category_id)
+      setSuccessMessage(category
+        ? t('successCategoryAssigned', { title, category: category.name })
+        : t('successCategoryRemoved', { title }))
+    } else if (isDeliveryPatch) {
       const { immediate, daily } = deliveryTargetsOf({ ...source, ...patch })
       const key = immediate && daily ? 'successDeliveryBoth' : immediate ? 'successDeliveryImmediate' : 'successDeliveryDaily'
       setSuccessMessage(t(key, { title }))
@@ -151,6 +185,79 @@ export default function SubscriptionsPage() {
       setSuccessMessage(t('saved', { title }))
     }
     return true
+  }
+
+  // ─── Kanban #48: categories ──────────────────────────────────────
+
+  /** Unique violations (another tab, other casing) are shown as "name taken". */
+  function categoryError(error: { code?: string }): CategoryNameError {
+    return error.code === '23505' ? 'duplicate' : 'save'
+  }
+
+  async function handleCreateCategory(name: string): Promise<CategoryNameError | null> {
+    if (!user) return 'save'
+    setErrorMessage(null)
+    // The position is set by the database: a new category goes last.
+    const { data, error } = await supabase
+      .from('source_categories')
+      .insert({ user_id: user.id, name })
+      .select('*')
+      .single()
+    if (error || !data) return error ? categoryError(error) : 'save'
+    setCategories((prev) => sortCategories([...prev, data as SourceCategory]))
+    setSuccessMessage(t('categoryCreated', { name }))
+    return null
+  }
+
+  async function handleRenameCategory(category: SourceCategory, name: string): Promise<CategoryNameError | null> {
+    setErrorMessage(null)
+    const { error } = await supabase
+      .from('source_categories')
+      .update({ name })
+      .eq('id', category.id)
+    if (error) return categoryError(error)
+    setCategories((prev) => prev.map((c) => (c.id === category.id ? { ...c, name } : c)))
+    setSuccessMessage(t('categoryRenamed', { name }))
+    return null
+  }
+
+  async function handleMoveCategory(category: SourceCategory, direction: 'up' | 'down') {
+    const order = moveCategory(categories, category.id, direction)
+    if (!order) return
+    setErrorMessage(null)
+    const previous = categories
+    // Optimistic: the new order is shown at once and saved in one transaction.
+    const byId = new Map(categories.map((c) => [c.id, c]))
+    setCategories(order.flatMap((id, position) => {
+      const moved = byId.get(id)
+      return moved ? [{ ...moved, position }] : []
+    }))
+    const request = reorderQueue.current.then(() => supabase.rpc('reorder_source_categories', { category_ids: order }))
+    reorderQueue.current = request.catch(() => undefined)
+    const { error } = await request
+    if (error) {
+      setCategories(previous)
+      setErrorMessage(t('categoryErrorMove'))
+      loadCategories()
+      return
+    }
+    setSuccessMessage(t('categoryMoved', { name: category.name, position: order.indexOf(category.id) + 1, count: order.length }))
+  }
+
+  async function handleDeleteCategory(category: SourceCategory) {
+    setErrorMessage(null)
+    const { error } = await supabase
+      .from('source_categories')
+      .delete()
+      .eq('id', category.id)
+    if (error) {
+      setErrorMessage(t('categoryErrorDelete'))
+      return
+    }
+    // The database only clears category_id of its sources (ON DELETE SET NULL); they stay.
+    setCategories((prev) => prev.filter((c) => c.id !== category.id))
+    setSources((prev) => prev.map((s) => (s.category_id === category.id ? { ...s, category_id: null } : s)))
+    setSuccessMessage(t('categoryDeleted', { name: category.name }))
   }
 
   function handleDeleteClick(source: PodcastSubscription) {
@@ -227,8 +334,20 @@ export default function SubscriptionsPage() {
           <AddSourceForm onAdded={handleAdded} />
         </div>
 
+        {/* Own categories: order of the daily newsletter */}
+        <div className="mb-12">
+          <CategoryManager
+            categories={categories}
+            sourceCounts={sourceCounts}
+            onCreate={handleCreateCategory}
+            onRename={handleRenameCategory}
+            onMove={handleMoveCategory}
+            onDelete={handleDeleteCategory}
+          />
+        </div>
+
         {/* All sources */}
-        <SourceList sources={sources} onUpdate={handleUpdate} onDelete={handleDeleteClick} />
+        <SourceList sources={sources} categories={categories} onUpdate={handleUpdate} onDelete={handleDeleteClick} />
       </div>
 
       {/* Delete Confirmation Dialog */}

@@ -12,3 +12,4 @@
 !src/lib/websites/*.mjs
 !src/lib/net/*.mjs
 !src/lib/social/*.mjs
+!src/lib/sources/*.mjs

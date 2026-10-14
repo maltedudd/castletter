@@ -7,6 +7,7 @@
 
 import { isPodcastOnly, MIN_OVERVIEW_ITEMS, sortDigestItems } from './digest.mjs'
 import { wantedTargetsOf } from './delivery-targets.mjs'
+import { categoryOf } from '../sources/categories.mjs'
 import { normalizeSummaryStyle } from './summary-style.mjs'
 
 export const DELIVERY_MODES = ['daily', 'immediate']
@@ -174,12 +175,25 @@ function hasDeliverableContent(episode) {
   return episode.source_type === 'social' || newsletterOf(episode) !== null
 }
 
-function toNewsletterItem(episode, podcastTitle) {
+/**
+ * The user's source categories by id (Kanban #48). They only order the digest, so a failed read
+ * sends the digest without categories instead of holding it back.
+ */
+async function loadCategories(supabase, userId) {
+  const { data, error } = await supabase
+    .from('source_categories')
+    .select('id, name, position')
+    .eq('user_id', userId)
+  if (error) return new Map()
+  return new Map((data ?? []).map((category) => [category.id, category]))
+}
+
+function toNewsletterItem(episode, subscription, categoriesById) {
   const newsletter = newsletterOf(episode)
 
   const item = {
     id: episode.id,
-    podcastTitle,
+    podcastTitle: subscription?.title || 'Podcast',
     episodeTitle: episode.title,
     intro: newsletter?.intro || '',
     bulletPoints: newsletter?.bullet_points || [],
@@ -191,6 +205,7 @@ function toNewsletterItem(episode, podcastTitle) {
     audioUrl: episode.audio_url,
     sourceType: episode.source_type ?? 'podcast',
     publishedAt: episode.published_at ?? null,
+    category: categoryOf(subscription, categoriesById),
   }
   if (episode.source_type === 'social') {
     // The original post (sanitised HTML), its content warning and media – never summarised.
@@ -215,7 +230,10 @@ function toNewsletterItem(episode, podcastTitle) {
  *
  * `sendEmail({ to, subject, items, mode, overview })` must throw if the mail was not accepted;
  * `mode` ('immediate' | 'daily') selects the mail's introduction text. Items are in digest
- * order: podcasts, YouTube, Website (RSS), Social, each chronological (see sortDigestItems).
+ * order: by the user's source categories (uncategorised last, Kanban #48), within each
+ * podcasts, YouTube, Website (RSS), Social, each chronological (see sortDigestItems). Every
+ * item carries its `category` ({ id, name, position } or null); categories are only read for a
+ * digest and change nothing about claims or delivery state.
  *
  * `summarizeDigest(items, style)` (optional) creates the overview of a daily digest with at
  * least MIN_OVERVIEW_ITEMS items in the user's style (`user.summary_tone`,
@@ -234,7 +252,7 @@ export async function sendNewsletterToUser({
 
   const { data: subscriptions, error: subscriptionError } = await supabase
     .from('podcast_subscriptions')
-    .select('id, title, delivery_mode, deliver_immediately, deliver_daily')
+    .select('id, title, delivery_mode, deliver_immediately, deliver_daily, category_id')
     .eq('user_id', user.user_id)
   if (subscriptionError) throw new Error(`Abos konnten nicht gelesen werden: ${subscriptionError.message}`)
   if (!subscriptions || subscriptions.length === 0) return result
@@ -268,6 +286,7 @@ export async function sendNewsletterToUser({
   const daily = episodes.filter(isOpen('daily'))
   const batches = immediate.map((episode) => ({ mode: 'immediate', episodes: [episode] }))
   if (includeDaily && daily.length > 0) batches.push({ mode: 'daily', episodes: daily })
+  const categoriesById = includeDaily && daily.length > 0 ? await loadCategories(supabase, user.user_id) : new Map()
 
   for (const batch of batches) {
     const claimedIds = new Set(await claimDeliveries(supabase, {
@@ -277,7 +296,7 @@ export async function sendNewsletterToUser({
     if (claimed.length === 0) continue
 
     const items = sortDigestItems(claimed.map((episode) =>
-      toNewsletterItem(episode, subscriptionsById.get(episode.subscription_id)?.title || 'Podcast')
+      toNewsletterItem(episode, subscriptionsById.get(episode.subscription_id), categoriesById)
     ))
     const ids = claimed.map((episode) => episode.id)
     const subject = buildNewsletterSubject(items, batch.mode)

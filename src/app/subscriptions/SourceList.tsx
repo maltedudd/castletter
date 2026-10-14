@@ -12,14 +12,18 @@ import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { deliveryPatchOf, deliveryTargetsOf, toggleDeliveryTarget } from '@/lib/newsletter/delivery-targets.mjs'
 import { socialProfileUrl } from '@/lib/social/platforms.mjs'
-import type { DeliveryTarget, Episode, PodcastSubscription, SourceType } from '@/types/database'
+import type { DeliveryTarget, Episode, PodcastSubscription, SourceCategory, SourceType } from '@/types/database'
 import { SourceImage } from './SourceImage'
 
 type FailedEpisode = Pick<Episode, 'id' | 'subscription_id' | 'title' | 'status' | 'error_code' | 'error_message' | 'published_at'>
 
-export type SourcePatch = Partial<Pick<PodcastSubscription, 'title' | 'enabled' | 'deliver_immediately' | 'deliver_daily'>>
+export type SourcePatch = Partial<Pick<PodcastSubscription, 'title' | 'enabled' | 'deliver_immediately' | 'deliver_daily' | 'category_id'>>
+
+// Radix Select needs a non-empty value for "no category".
+const NO_CATEGORY = 'none'
 
 // error_code is written for YouTube videos and website articles; podcast failures fall back to
 // the generic text.
@@ -87,11 +91,13 @@ function SourceStatusBadge({ source }: { source: PodcastSubscription }) {
 
 function SourceCard({
   source,
+  categories,
   failedEpisodes,
   onUpdate,
   onDelete,
 }: {
   source: PodcastSubscription
+  categories: SourceCategory[]
   failedEpisodes: FailedEpisode[]
   onUpdate: (source: PodcastSubscription, patch: SourcePatch) => Promise<boolean>
   onDelete: (source: PodcastSubscription) => void
@@ -103,6 +109,9 @@ function SourceCard({
   const [targetRequired, setTargetRequired] = useState(false)
   const deliveryId = `delivery-${source.id}`
   const switchId = `enabled-${source.id}`
+  const categoryId = `category-${source.id}`
+  // A category that is gone (deleted elsewhere) counts as none.
+  const currentCategory = source.category_id && categories.some((c) => c.id === source.category_id) ? source.category_id : NO_CATEGORY
   const link = sourceLink(source)
   const targets = deliveryTargetsOf(source)
 
@@ -227,6 +236,27 @@ function SourceCard({
             </div>
           ))}
         </fieldset>
+        {/* Kanban #48: at most one category per source; it only orders the daily newsletter. */}
+        <div className="flex items-center gap-2">
+          <Label htmlFor={categoryId} className="text-sm font-normal text-muted-foreground">{t('sourceCategoryLabel')}</Label>
+          <Select
+            value={currentCategory}
+            onValueChange={(value) => {
+              const next = value === NO_CATEGORY ? null : value
+              if (next !== (source.category_id ?? null)) onUpdate(source, { category_id: next })
+            }}
+          >
+            <SelectTrigger id={categoryId} className="h-9 w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_CATEGORY}>{t('sourceCategoryNone')}</SelectItem>
+              {categories.map((category) => (
+                <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {targetRequired && (
@@ -263,10 +293,13 @@ function SourceCard({
 /** All sources of the user (podcasts, YouTube channels, websites, Mastodon/Bluesky accounts) with the same actions. */
 export function SourceList({
   sources,
+  categories,
   onUpdate,
   onDelete,
 }: {
   sources: PodcastSubscription[]
+  /** The user's categories in their order (Kanban #48) */
+  categories: SourceCategory[]
   onUpdate: (source: PodcastSubscription, patch: SourcePatch) => Promise<boolean>
   onDelete: (source: PodcastSubscription) => void
 }) {
@@ -318,6 +351,7 @@ export function SourceList({
               <SourceCard
                 key={source.id}
                 source={source}
+                categories={categories}
                 failedEpisodes={failedEpisodes.filter((e) => e.subscription_id === source.id).slice(0, 5)}
                 onUpdate={onUpdate}
                 onDelete={onDelete}

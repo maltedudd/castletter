@@ -75,9 +75,22 @@ export interface PodcastSubscription {
   /** Kanban #43: item is included in the daily digest */
   deliver_daily: boolean
   enabled: boolean
+  /** Kanban #48: the user's category of this source (null = none, "Weitere Quellen" in the digest) */
+  category_id: string | null
   last_checked_at: string | null
   last_check_status: 'success' | 'error' | null
   last_check_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Kanban #48: a private, named group of the user's sources; `position` is the user's order. */
+export interface SourceCategory {
+  id: string
+  user_id: string
+  /** Trimmed, 1–50 characters, unique per user (case-insensitive) */
+  name: string
+  position: number
   created_at: string
   updated_at: string
 }
