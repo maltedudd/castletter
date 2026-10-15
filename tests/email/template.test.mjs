@@ -330,3 +330,77 @@ test('daily digest: summaries first, then social posts in their own section', ()
   // Without social posts there is no social section.
   assert.doesNotMatch(generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily'), /Social-Beiträge/)
 })
+
+// ─── Kanban #48: user categories ────────────────────────────────────
+
+const NEWS = { id: 'cat-news', name: 'Welt & <Politik>', position: 0 }
+const TECH = { id: 'cat-tech', name: 'Technik', position: 1 }
+const socialItem = (id) => ({
+  ...typed(id, 'social', '2026-10-07T00:00:00.000Z'), intro: '', bulletPoints: [], keyTakeaways: [],
+  social: { html: `<p>Post ${id}</p>`, spoiler: null, media: [] },
+})
+// Like assertInOrder, but markers may repeat (each one is searched after the previous one).
+function assertSequence(text, markers, label) {
+  let from = 0
+  for (const marker of markers) {
+    const index = text.indexOf(marker, from)
+    assert.ok(index >= 0, `${marker} missing or out of order (${label})`)
+    from = index + marker.length
+  }
+}
+
+// In digest order, as sendNewsletterToUser hands them over (see sortDigestItems).
+const CATEGORISED = [
+  { ...typed('n-web', 'website', '2026-10-07T01:00:00.000Z'), category: NEWS },
+  { ...socialItem('n-social'), category: NEWS },
+  { ...typed('t-pod', 'podcast', '2026-10-07T03:00:00.000Z'), category: TECH },
+  { ...typed('t-yt', 'youtube', '2026-10-07T04:00:00.000Z'), category: TECH },
+  { ...typed('f-pod', 'podcast', '2026-10-07T02:00:00.000Z'), category: null },
+  { ...socialItem('f-social'), category: null },
+]
+
+test('Kanban #48: digest shows each non-empty category as a heading in the user\'s order, its type sections inside, "Weitere Quellen" last', () => {
+  const html = generateEmailHTML('m@x.de', CATEGORISED, 'https://s', 'de', 'daily', OVERVIEW)
+  assertSequence(html, ['<!-- Overview -->',
+    '<!-- Category: Welt &amp; &lt;Politik&gt; -->', '>Welt &amp; &lt;Politik&gt;</h2>', '<!-- Section: Website (RSS) -->', 'Intro n-web.', '<!-- Section: Social -->', 'Post n-social',
+    '<!-- Category: Technik -->', '>Technik</h2>', '<!-- Section: Podcasts -->', 'Intro t-pod.', '<!-- Section: YouTube -->', 'Intro t-yt.',
+    '<!-- Category: Weitere Quellen -->', '>Weitere Quellen</h2>', '<!-- Section: Podcasts -->', 'Intro f-pod.', '<!-- Section: Social -->', 'Post f-social'], 'html')
+  assert.doesNotMatch(html, /<Politik>/, 'category names are escaped')
+  // Type headings inside a category are sub-headings (h3), the category is the h2.
+  const tech = html.slice(html.indexOf('<!-- Category: Technik -->'), html.indexOf('<!-- Category: Weitere Quellen -->'))
+  assert.match(tech, /<h3[^>]*>Podcasts<\/h3>/)
+  assert.match(tech, /<h3[^>]*>YouTube<\/h3>/)
+  assert.equal((html.match(/Unverändert weitergeleitet, ohne Zusammenfassung\./g) ?? []).length, 2, 'social note under each social sub-heading')
+
+  const text = generateEmailPlainText(CATEGORISED, 'https://s', 'de', 'daily', OVERVIEW)
+  assertSequence(text, ['KERNTHEMEN:',
+    '■■ Welt & <Politik> ■■', '▬▬ WEBSITE (RSS) ▬▬', 'Intro n-web.', '▬▬ SOCIAL-BEITRÄGE ▬▬', 'Post n-social',
+    '■■ Technik ■■', '▬▬ PODCASTS ▬▬', 'Intro t-pod.', '▬▬ YOUTUBE ▬▬', 'Intro t-yt.',
+    '■■ Weitere Quellen ■■', '▬▬ PODCASTS ▬▬', 'Intro f-pod.', '▬▬ SOCIAL-BEITRÄGE ▬▬', 'Post f-social'], 'text')
+})
+
+test('Kanban #48: English label for uncategorised sources; no "more sources" heading when every item has a category', () => {
+  const html = generateEmailHTML('m@x.de', CATEGORISED, 'https://s', 'en', 'daily')
+  assert.match(html, />More sources<\/h2>/)
+  assert.match(generateEmailPlainText(CATEGORISED, 'https://s', 'en', 'daily'), /■■ More sources ■■/)
+
+  const onlyCategorised = CATEGORISED.filter((item) => item.category)
+  assert.doesNotMatch(generateEmailHTML('m@x.de', onlyCategorised, 'https://s', 'de', 'daily'), /Weitere Quellen/)
+  assert.doesNotMatch(generateEmailPlainText(onlyCategorised, 'https://s', 'de', 'daily'), /Weitere Quellen/)
+})
+
+test('Kanban #48: without categories the digest is rendered exactly as before', () => {
+  const plain = DIGEST.map((item) => ({ ...item, category: null }))
+  assert.equal(generateEmailHTML('m@x.de', plain, 'https://s', 'de', 'daily', OVERVIEW), generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', OVERVIEW))
+  assert.equal(generateEmailPlainText(plain, 'https://s', 'de', 'daily', OVERVIEW), generateEmailPlainText(DIGEST, 'https://s', 'de', 'daily', OVERVIEW))
+  const html = generateEmailHTML('m@x.de', plain, 'https://s', 'de', 'daily')
+  assert.doesNotMatch(html, /<!-- Category:|Weitere Quellen/)
+  assert.match(html, /<h2[^>]*>Podcasts<\/h2>/, 'type sections stay top-level headings')
+})
+
+test('Kanban #48: an immediate mail never shows a category heading', () => {
+  const single = [{ ...typed('t-pod', 'podcast', null), category: TECH }]
+  const html = generateEmailHTML('m@x.de', single, 'https://s', 'de', 'immediate')
+  assert.doesNotMatch(html, /<!-- Category:|<!-- Section:|Technik/)
+  assert.doesNotMatch(generateEmailPlainText(single, 'https://s', 'de', 'immediate'), /■■|▬▬|Technik/)
+})

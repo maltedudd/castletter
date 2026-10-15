@@ -9,6 +9,8 @@ import {
   MAX_WEBSITE_SENTENCES,
   sortDigestItems,
   groupDigestItems,
+  groupDigestByCategory,
+  hasCategories,
   isPodcastOnly,
   hasSummaryContent,
   selectOverviewItems,
@@ -305,4 +307,73 @@ test('social posts (Kanban #39) are a source type of their own, after Website (R
   assert.equal(hasSummaryContent(social), false)
   assert.equal(websiteSummary(social), '', 'never treated as a website article')
   assert.doesNotMatch(buildDigestOverviewPrompt([social, ...MIXED], {}), /s1|Social/)
+})
+
+// ─── Kanban #48: user categories ────────────────────────────────────
+
+const NEWS = { id: 'cat-news', name: 'Weltgeschehen', position: 0 }
+const TECH = { id: 'cat-tech', name: 'Technik', position: 3 }
+const inCategory = (category, it) => ({ ...it, category })
+
+const CATEGORISED = [
+  inCategory(TECH, item('t-web', 'website', '2026-10-06T01:00:00.000Z')),
+  item('free-pod', 'podcast', '2026-10-06T00:00:00.000Z'),
+  inCategory(NEWS, item('n-yt', 'youtube', '2026-10-05T00:00:00.000Z')),
+  inCategory(TECH, item('t-pod', 'podcast', '2026-10-07T00:00:00.000Z')),
+  inCategory(NEWS, item('n-pod2', 'podcast', '2026-10-07T00:00:00.000Z')),
+  inCategory(NEWS, item('n-pod1', 'podcast', '2026-10-04T00:00:00.000Z')),
+  item('free-social', 'social', '2026-10-01T00:00:00.000Z', { intro: '', bulletPoints: [], keyTakeaways: [] }),
+  inCategory(TECH, item('t-social', 'social', '2026-10-01T00:00:00.000Z', { intro: '', bulletPoints: [], keyTakeaways: [] })),
+]
+
+test('Kanban #48: categories in the user\'s order come first, the type order applies within each; uncategorised items last', () => {
+  assert.deepEqual(ids(sortDigestItems(CATEGORISED)), [
+    'n-pod1', 'n-pod2', 'n-yt', // Weltgeschehen (position 0): podcasts oldest first, then YouTube
+    't-pod', 't-web', 't-social', // Technik (position 3)
+    'free-pod', 'free-social', // no category
+  ])
+  for (const input of [[...CATEGORISED].reverse(), [CATEGORISED[3], ...CATEGORISED.slice(4), ...CATEGORISED.slice(0, 3)]]) {
+    assert.deepEqual(ids(sortDigestItems(input)), ids(sortDigestItems(CATEGORISED)))
+  }
+  // Changing the user's order changes the digest order.
+  const reordered = CATEGORISED.map((it) => it.category?.id === 'cat-news' ? { ...it, category: { ...NEWS, position: 9 } } : it)
+  assert.deepEqual(ids(sortDigestItems(reordered)).slice(0, 3), ['t-pod', 't-web', 't-social'])
+})
+
+test('Kanban #48: without any category the digest order is unchanged', () => {
+  const plain = MIXED.map((it) => ({ ...it, category: null }))
+  assert.deepEqual(ids(sortDigestItems(plain)), ['p1', 'p2', 'y1', 'y2', 'w1', 'w2'])
+  assert.equal(hasCategories(plain), false)
+  assert.equal(hasCategories(MIXED), false)
+  assert.equal(hasCategories(CATEGORISED), true)
+  assert.deepEqual(groupDigestByCategory(MIXED).map((g) => [g.category, g.sections.map((s) => s.type)]), [
+    [null, ['podcast', 'youtube', 'website']],
+  ])
+})
+
+test('Kanban #48: groupDigestByCategory – one group per non-empty category in order, type sections inside, "more sources" last', () => {
+  const groups = groupDigestByCategory(CATEGORISED)
+  assert.deepEqual(groups.map((g) => [g.category?.name ?? null, g.sections.map((s) => [s.type, ids(s.items)])]), [
+    ['Weltgeschehen', [['podcast', ['n-pod1', 'n-pod2']], ['youtube', ['n-yt']]]],
+    ['Technik', [['podcast', ['t-pod']], ['website', ['t-web']], ['social', ['t-social']]]],
+    [null, [['podcast', ['free-pod']], ['social', ['free-social']]]],
+  ])
+  // Empty categories never appear; a digest of categorised items only has no "more sources" group.
+  assert.deepEqual(groupDigestByCategory(CATEGORISED.filter((it) => it.category)).map((g) => g.category?.id ?? null), ['cat-news', 'cat-tech'])
+  assert.deepEqual(groupDigestByCategory(undefined), [])
+})
+
+test('Kanban #48: two categories with the same position stay apart (ordered by id)', () => {
+  const a = { id: 'a', name: 'A', position: 1 }
+  const b = { id: 'b', name: 'B', position: 1 }
+  const items = [inCategory(b, item('b1', 'podcast', null)), inCategory(a, item('a1', 'social', null)), inCategory(b, item('b2', 'website', null))]
+  assert.deepEqual(groupDigestByCategory(items).map((g) => [g.category.id, ids(g.sections.flatMap((s) => s.items))]), [['a', ['a1']], ['b', ['b1', 'b2']]])
+})
+
+test('Kanban #48: categories do not change the overview – selection and prompt stay type-weighted', () => {
+  const plain = CATEGORISED.map(({ category, ...rest }) => rest)
+  assert.deepEqual(ids(selectOverviewItems(CATEGORISED)), ids(selectOverviewItems(plain)))
+  assert.deepEqual(ids(selectOverviewItems(CATEGORISED)), ['n-pod1', 'free-pod', 'n-pod2', 't-pod', 'n-yt', 't-web'])
+  assert.equal(buildDigestOverviewPrompt(CATEGORISED, null), buildDigestOverviewPrompt(plain, null))
+  assert.doesNotMatch(buildDigestOverviewPrompt(CATEGORISED, null), /Weltgeschehen|Technik/)
 })

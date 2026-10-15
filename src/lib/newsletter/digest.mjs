@@ -1,6 +1,8 @@
 // Daily digest (Kanban #38, #42): the integrated overview ("Überblick") above the single
 // summaries. Both follow the fixed source-type order – podcasts, then YouTube, then Website
-// (RSS), then Social – chronological within each type. The overview starts with concrete key
+// (RSS), then Social – chronological within each type. Since Kanban #48 the single items are
+// first grouped by the user's own source categories (in the user's order, uncategorised items
+// last); the type order applies within each category. The overview ignores categories. The overview starts with concrete key
 // themes, each linked to the items it is drawn from; it is built from the stored summaries and
 // their metadata only, never from transcripts, so cost and context stay bounded. Social posts
 // (Kanban #39) are mailed unchanged without a summary, so the overview never includes them.
@@ -64,17 +66,59 @@ export function compareDigestItems(a, b) {
     || compareText(a.id, b.id)
 }
 
-/** Items in digest order (see compareDigestItems). Returns a new array. */
+/** Category order of an item (Kanban #48): its category's position; uncategorised items last. */
+function categoryRank(item) {
+  const position = item?.category?.position
+  return Number.isFinite(position) ? position : Infinity
+}
+
+function compareCategories(a, b) {
+  const left = categoryRank(a)
+  const right = categoryRank(b)
+  if (left !== right) return left < right ? -1 : 1
+  return compareText(a?.category?.id, b?.category?.id)
+}
+
+/**
+ * Items in digest order: the user's category order first (uncategorised last, Kanban #48), then
+ * compareDigestItems within each category. Without categories this is compareDigestItems alone.
+ * Returns a new array.
+ */
 export function sortDigestItems(items) {
-  return [...(items ?? [])].sort(compareDigestItems)
+  return [...(items ?? [])].sort((a, b) => compareCategories(a, b) || compareDigestItems(a, b))
+}
+
+/** Whether any item belongs to a user category – only then the digest shows category headings. */
+export function hasCategories(items) {
+  return (items ?? []).some((item) => Boolean(item?.category?.id))
+}
+
+/** Items grouped by type section: `[{ type, items }]`, empty sections left out. */
+function typeSections(items) {
+  return DIGEST_SECTION_ORDER
+    .map((type) => ({ type, items: items.filter((item) => digestSourceType(item) === type) }))
+    .filter((group) => group.items.length > 0)
 }
 
 /** Items in digest order, grouped by section: `[{ type, items }]`, empty sections left out. */
 export function groupDigestItems(items) {
-  const sorted = sortDigestItems(items)
-  return DIGEST_SECTION_ORDER
-    .map((type) => ({ type, items: sorted.filter((item) => digestSourceType(item) === type) }))
-    .filter((group) => group.items.length > 0)
+  return typeSections(sortDigestItems(items))
+}
+
+/**
+ * Items in digest order, grouped by category (Kanban #48): `[{ category, sections }]` with one
+ * group per non-empty category in the user's order and the uncategorised items last
+ * (`category: null`); `sections` are the type sections of groupDigestItems.
+ */
+export function groupDigestByCategory(items) {
+  const groups = []
+  for (const item of sortDigestItems(items)) {
+    const id = item?.category?.id ?? null
+    const last = groups.at(-1)
+    if (last && (last.category?.id ?? null) === id) last.items.push(item)
+    else groups.push({ category: id ? item.category : null, items: [item] })
+  }
+  return groups.map(({ category, items: grouped }) => ({ category, sections: typeSections(grouped) }))
 }
 
 /** Whether every item is a podcast episode (legacy rows without a type count as podcasts). */
@@ -173,12 +217,13 @@ function describeItem(item, index) {
 }
 
 /**
- * The items an overview is based on, in prompt order: summarised items in digest order,
+ * The items an overview is based on, in prompt order: summarised items in type order (compareDigestItems),
  * at most MAX_OVERVIEW_ITEMS (lower-priority items are left out first). The numbers `[n]` in
  * the prompt and in the answer refer to this list.
  */
 export function selectOverviewItems(items) {
-  return sortDigestItems(items).filter(hasSummaryContent).slice(0, MAX_OVERVIEW_ITEMS)
+  // Type weighting only: user categories (Kanban #48) never change the overview.
+  return [...(items ?? [])].sort(compareDigestItems).filter(hasSummaryContent).slice(0, MAX_OVERVIEW_ITEMS)
 }
 
 /**
