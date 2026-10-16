@@ -50,11 +50,23 @@ import { safeHttpUrl, sanitizeSocialHtml, socialPostText } from '../social/sanit
  */
 
 /**
- * Integrated overview above the single summaries of a digest (see newsletter/digest.mjs).
+ * One paragraph of the overview by category (Kanban #50); `category` is null for "more sources".
+ * @typedef {Object} OverviewCategoryParagraph
+ * @property {{ id: string, name: string } | null} category
+ * @property {string} text
+ * @property {OverviewSource[]} sources
+ */
+
+/**
+ * Integrated overview above the single summaries of a digest (see newsletter/digest.mjs):
+ * key themes, connections and context, or – with user categories (Kanban #50) – an
+ * introduction across all categories and one paragraph per category.
  * @typedef {Object} DigestOverview
- * @property {OverviewPoint[]} themes
- * @property {OverviewPoint[]} connections
- * @property {string | null} reflection
+ * @property {OverviewPoint[]} [themes]
+ * @property {OverviewPoint[]} [connections]
+ * @property {string | null} [reflection]
+ * @property {OverviewPoint | null} [intro]
+ * @property {OverviewCategoryParagraph[]} [categories]
  * @property {number} [itemCount]  How many summaries the overview is based on
  */
 
@@ -107,6 +119,8 @@ const strings = {
     overviewConnections: 'Zusammenhänge & Spannungen',
     overviewReflection: 'Einordnung',
     overviewNote: (count) => `KI-Überblick auf Basis der ${count} Zusammenfassungen unten; Podcasts sind am stärksten gewichtet, dann YouTube, dann Website (RSS). Jeder Punkt verlinkt die Beiträge, aus denen er stammt.`,
+    overviewIntro: 'Auf einen Blick',
+    overviewCategoryNote: (count) => `KI-Überblick auf Basis der ${count} Zusammenfassungen unten, nach deinen Kategorien gegliedert; Podcasts sind am stärksten gewichtet, dann YouTube, dann Website (RSS). Jeder Absatz verlinkt die Beiträge, aus denen er stammt.`,
     missingSummary: 'Für diesen Inhalt liegt keine Zusammenfassung vor.',
     immediateSocialSubject: 'Neuer Beitrag',
     immediateSocialHeaderTagline: 'Neuer Beitrag, unverändert weitergeleitet',
@@ -151,6 +165,8 @@ const strings = {
     overviewConnections: 'Connections & tensions',
     overviewReflection: 'Context',
     overviewNote: (count) => `AI overview based on the ${count} summaries below; podcasts weigh most, then YouTube, then Website (RSS). Every point links the items it is drawn from.`,
+    overviewIntro: 'At a glance',
+    overviewCategoryNote: (count) => `AI overview based on the ${count} summaries below, organised by your categories; podcasts weigh most, then YouTube, then Website (RSS). Every paragraph links the items it is drawn from.`,
     missingSummary: 'No summary is available for this item.',
     immediateSocialSubject: 'New post',
     immediateSocialHeaderTagline: 'New post, passed on unchanged',
@@ -227,9 +243,13 @@ function linkedPoints(points) {
     .filter((point) => point.text && point.sources.length > 0)
 }
 
-/** The overview is shown for digests of at least MIN_OVERVIEW_ITEMS items with linked key themes. */
+/**
+ * The overview is shown for digests of at least MIN_OVERVIEW_ITEMS items with linked key
+ * themes – or, by category (Kanban #50), with a linked introduction or category paragraph.
+ */
 function visibleOverview(newsletters, mode, overview) {
   if (!overview || !isDigest(newsletters, mode) || newsletters.length < MIN_OVERVIEW_ITEMS) return null
+  if (Array.isArray(overview.categories)) return visibleCategoryOverview(newsletters, overview)
   const themes = linkedPoints(overview.themes)
   if (themes.length === 0) return null
   return {
@@ -238,6 +258,20 @@ function visibleOverview(newsletters, mode, overview) {
     reflection: overview.reflection?.trim() || null,
     count: overview.itemCount ?? newsletters.length,
   }
+}
+
+function visibleCategoryOverview(newsletters, overview) {
+  const intro = linkedPoints(overview.intro ? [overview.intro] : [])[0] ?? null
+  const categories = overview.categories
+    .map((paragraph) => ({ category: paragraph?.category ?? null, ...linkedPoints([paragraph])[0] }))
+    .filter((paragraph) => paragraph.text)
+  if (!intro && categories.length === 0) return null
+  return { intro, categories, count: overview.itemCount ?? newsletters.length }
+}
+
+/** Heading of a category paragraph of the overview: the category name, or "more sources". */
+function overviewCategoryHeading(paragraph, s) {
+  return paragraph.category?.name ?? s.moreSources
 }
 
 /** Link text of an overview source: "Source – Title". */
@@ -368,6 +402,17 @@ function generatePointList(points, s) {
     .join('')
 }
 
+/** Introduction and category paragraphs of the overview by category (Kanban #50). */
+function generateCategoryOverviewContent(overview, s) {
+  const paragraph = (title, point) => `
+              <h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(title)}</h3>
+              <p style="margin: 0; color: ${COLORS.primary}; font-size: 14px; line-height: 1.6;">${escapeHtml(point.text)}${generateSourceLinks(point.sources, s)}</p>`
+  return (overview.intro ? paragraph(s.overviewIntro, overview.intro) : '')
+    + overview.categories.map((point) => paragraph(overviewCategoryHeading(point, s), point)).join('')
+    + `
+              <p style="margin: 16px 0 0; color: ${COLORS.textMuted}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewCategoryNote(overview.count))}</p>`
+}
+
 function generateOverviewBlock(overview, s) {
   if (!overview) return ''
   const list = (title, points) => points.length === 0 ? '' : `
@@ -382,10 +427,10 @@ function generateOverviewBlock(overview, s) {
           <tr>
             <td style="padding: 20px;">
               <p style="margin: 0 0 4px; color: ${COLORS.secondary}; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.overviewLabel)}</p>
-              <h2 style="margin: 0; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.overviewTitle(overview.count))}</h2>${list(s.overviewThemes, overview.themes)}${list(s.overviewConnections, overview.connections)}
+              <h2 style="margin: 0; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.overviewTitle(overview.count))}</h2>${overview.categories ? generateCategoryOverviewContent(overview, s) : `${list(s.overviewThemes, overview.themes)}${list(s.overviewConnections, overview.connections)}
               ${overview.reflection ? `<h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.overviewReflection)}</h3>
               <p style="margin: 0; color: ${COLORS.primary}; font-size: 14px; line-height: 1.5; font-style: italic;">${escapeHtml(overview.reflection)}</p>` : ''}
-              <p style="margin: 16px 0 0; color: ${COLORS.textMuted}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewNote(overview.count))}</p>
+              <p style="margin: 16px 0 0; color: ${COLORS.textMuted}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewNote(overview.count))}</p>`}
             </td>
           </tr>
         </table>
@@ -615,6 +660,15 @@ function generateOverviewPlainText(overview, s) {
     '', `${title.toUpperCase()}:`,
     ...list.flatMap((point) => [`  • ${point.text}`, ...point.sources.map((source) => `    → ${sourceLabel(source)}: ${source.url}`)]),
   ]
+  if (overview.categories) {
+    const paragraph = (title, point) => ['', `${title.toUpperCase()}:`, `  ${point.text}`, ...point.sources.map((source) => `    → ${sourceLabel(source)}: ${source.url}`)]
+    return `${[
+      `${s.overviewLabel.toUpperCase()} – ${s.overviewTitle(overview.count)}`,
+      ...(overview.intro ? paragraph(s.overviewIntro, overview.intro) : []),
+      ...overview.categories.flatMap((point) => paragraph(overviewCategoryHeading(point, s), point)),
+      '', `(${s.overviewCategoryNote(overview.count)})`,
+    ].join('\n')}\n\n`
+  }
   const lines = [
     `${s.overviewLabel.toUpperCase()} – ${s.overviewTitle(overview.count)}`,
     ...points(s.overviewThemes, overview.themes),

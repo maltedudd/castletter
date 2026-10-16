@@ -404,3 +404,70 @@ test('Kanban #48: an immediate mail never shows a category heading', () => {
   assert.doesNotMatch(html, /<!-- Category:|<!-- Section:|Technik/)
   assert.doesNotMatch(generateEmailPlainText(single, 'https://s', 'de', 'immediate'), /■■|▬▬|Technik/)
 })
+
+// ─── Kanban #50: overview by category ───────────────────────────────
+
+const CATEGORY_OVERVIEW = {
+  intro: { text: 'Die Wahl ist entschieden <jetzt>, das Chip-Gesetz kommt.', sources: [src('t-pod', 'podcast'), src('n-web', 'website')] },
+  categories: [
+    { category: { id: 'cat-news', name: 'Welt & <Politik>' }, text: 'Der Artikel nennt die Koalition & die Zahlen.', sources: [src('n-web', 'website')] },
+    { category: { id: 'cat-tech', name: 'Technik' }, text: 'Das Chip-Gesetz kommt im Frühjahr.', sources: [src('t-pod', 'podcast'), src('t-yt', 'youtube')] },
+    { category: { id: 'cat-x', name: 'Ohne Beleg' }, text: 'Wird nicht gezeigt.', sources: [] },
+    { category: null, text: 'Der freie Podcast nennt einen Termin.', sources: [src('f-pod', 'podcast')] },
+  ],
+  itemCount: 4,
+}
+
+test('Kanban #50: the overview starts with the introduction, then one paragraph per category, "Weitere Quellen" last', () => {
+  const html = generateEmailHTML('m@x.de', CATEGORISED, 'https://s', 'de', 'daily', CATEGORY_OVERVIEW)
+  assertSequence(html, ['<!-- Overview -->', 'Überblick', 'Das Wichtigste aus 4 Inhalten',
+    '>Auf einen Blick</h3>', 'Die Wahl ist entschieden &lt;jetzt&gt;, das Chip-Gesetz kommt.', 'Quellen:', 'href="https://example.com/t-pod?a=1&amp;b=&lt;2&gt;"', 'Quelle n-web – Titel n-web',
+    '>Welt &amp; &lt;Politik&gt;</h3>', 'Der Artikel nennt die Koalition &amp; die Zahlen.', 'Quelle n-web – Titel n-web',
+    '>Technik</h3>', 'Das Chip-Gesetz kommt im Frühjahr.', 'Quelle t-pod – Titel t-pod', 'Quelle t-yt – Titel t-yt',
+    '>Weitere Quellen</h3>', 'Der freie Podcast nennt einen Termin.', 'Quelle f-pod – Titel f-pod',
+    'nach deinen Kategorien gegliedert',
+    // The digest below keeps its category headings.
+    '<!-- Category: Welt &amp; &lt;Politik&gt; -->'], 'html')
+  const overview = html.slice(html.indexOf('<!-- Overview -->'), html.indexOf('<!-- Category:'))
+  assert.doesNotMatch(overview, /<Politik>|<jetzt>/, 'category names and texts are escaped')
+  assert.doesNotMatch(overview, /Ohne Beleg|Wird nicht gezeigt|Kernthemen/)
+
+  const text = generateEmailPlainText(CATEGORISED, 'https://s', 'de', 'daily', CATEGORY_OVERVIEW)
+  assertSequence(text, ['ÜBERBLICK – Das Wichtigste aus 4 Inhalten',
+    'AUF EINEN BLICK:', '  Die Wahl ist entschieden <jetzt>, das Chip-Gesetz kommt.', '    → Quelle t-pod – Titel t-pod: https://example.com/t-pod',
+    'WELT & <POLITIK>:', '  Der Artikel nennt die Koalition & die Zahlen.', '    → Quelle n-web – Titel n-web',
+    'TECHNIK:', '  Das Chip-Gesetz kommt im Frühjahr.',
+    'WEITERE QUELLEN:', '  Der freie Podcast nennt einen Termin.',
+    'nach deinen Kategorien gegliedert',
+    '■■ Welt & <Politik> ■■'], 'text')
+  assert.doesNotMatch(text.slice(0, text.indexOf('■■')), /Ohne Beleg|KERNTHEMEN/)
+})
+
+test('Kanban #50: overview by category in English', () => {
+  const html = generateEmailHTML('m@x.de', CATEGORISED, 'https://s', 'en', 'daily', CATEGORY_OVERVIEW)
+  assertSequence(html, ['The essentials from 4 items', '>At a glance</h3>', '>Technik</h3>', '>More sources</h3>', 'by your categories'], 'html')
+  const text = generateEmailPlainText(CATEGORISED, 'https://s', 'en', 'daily', CATEGORY_OVERVIEW)
+  assertSequence(text, ['OVERVIEW – The essentials from 4 items', 'AT A GLANCE:', 'TECHNIK:', 'MORE SOURCES:', 'by your categories'], 'text')
+})
+
+test('Kanban #50: missing parts of the category overview are left out; nothing linked → no overview block', () => {
+  const noIntro = { ...CATEGORY_OVERVIEW, intro: null }
+  const html = generateEmailHTML('m@x.de', CATEGORISED, 'https://s', 'de', 'daily', noIntro)
+  assert.match(html, /<!-- Overview -->/)
+  assert.doesNotMatch(html, /Auf einen Blick/)
+  assert.doesNotMatch(generateEmailPlainText(CATEGORISED, 'https://s', 'de', 'daily', noIntro), /AUF EINEN BLICK/)
+
+  const introOnly = { ...CATEGORY_OVERVIEW, categories: [] }
+  const introHtml = generateEmailHTML('m@x.de', CATEGORISED, 'https://s', 'de', 'daily', introOnly)
+  assert.match(introHtml, /Auf einen Blick/)
+  assert.doesNotMatch(introHtml.slice(0, introHtml.indexOf('<!-- Category:')), /Technik|Weitere Quellen/)
+
+  const unlinked = { intro: { text: 'Ohne Beleg.', sources: [] }, categories: [{ category: TECH, text: 'Auch ohne.', sources: [{ ...src('t', 'podcast'), url: '' }] }], itemCount: 4 }
+  for (const overview of [unlinked, { intro: null, categories: [] }]) {
+    assert.doesNotMatch(generateEmailHTML('m@x.de', CATEGORISED, 'https://s', 'de', 'daily', overview), /<!-- Overview -->/)
+    assert.doesNotMatch(generateEmailPlainText(CATEGORISED, 'https://s', 'de', 'daily', overview), /ÜBERBLICK/)
+  }
+  // Like the classic overview: never in an immediate mail of one item.
+  const single = [CATEGORISED[2]]
+  assert.doesNotMatch(generateEmailHTML('m@x.de', single, 'https://s', 'de', 'immediate', CATEGORY_OVERVIEW), /<!-- Overview -->/)
+})
