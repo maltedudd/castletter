@@ -358,12 +358,17 @@ test('daily digest with two or more items gets the overview in the user\'s style
   const { mails, sendEmail } = recordingMailer()
   const calls = []
   const overview = { themes: [{ text: 'Energie', sources: [] }], connections: [], reflection: null, itemCount: 4 }
-  const summarizeDigest = async (items, style) => { calls.push({ ids: items.map((i) => i.id), style }); return overview }
+  const summarizeDigest = async (items, style, options) => { calls.push({ ids: items.map((i) => i.id), style, options }); return overview }
   const user = { ...USER, summary_tone: 'analytical', summary_prompt_addition: ' Fokus Kommunen ' }
 
   await sendNewsletterToUser({ supabase: db, user, sendEmail, now: NOW, recentCutoff: CUTOFF, includeDaily: true, summarizeDigest })
 
-  assert.deepEqual(calls, [{ ids: ['pod-early', 'pod-late', 'yt', 'web'], style: { tone: 'analytical', promptAddition: 'Fokus Kommunen' } }])
+  // NIAS-55: the edition date (the send time) goes along, so the overview is about this day.
+  assert.deepEqual(calls, [{
+    ids: ['pod-early', 'pod-late', 'yt', 'web'],
+    style: { tone: 'analytical', promptAddition: 'Fokus Kommunen' },
+    options: { editionDate: NOW },
+  }])
   assert.deepEqual(mails[0].overview, overview)
   assert.deepEqual(mails[0].items.map((i) => i.id), ['pod-early', 'pod-late', 'yt', 'web'], 'single summaries stay complete')
 })

@@ -235,10 +235,11 @@ function toNewsletterItem(episode, subscription, categoriesById) {
  * item carries its `category` ({ id, name, position } or null); categories are only read for a
  * digest and change nothing about claims or delivery state.
  *
- * `summarizeDigest(items, style)` (optional) creates the overview of a daily digest with at
- * least MIN_OVERVIEW_ITEMS items in the user's style (`user.summary_tone`,
- * `user.summary_prompt_addition`). If it fails, the digest is sent without an overview and
- * `onOverviewError(err)` is told – the overview never holds back a delivery.
+ * `summarizeDigest(items, style, { editionDate })` (optional) creates the overview of a daily
+ * digest with at least MIN_OVERVIEW_ITEMS items in the user's style (`user.summary_tone`,
+ * `user.summary_prompt_addition`); `editionDate` is `now`, so the overview is about this day
+ * (NIAS-55). If it fails, the digest is sent without an overview and `onOverviewError(err)` is
+ * told – the overview never holds back a delivery.
  *
  * Every sent mail is recorded in `newsletter_mails` (the archive); its delivery rows point to
  * it. If that record fails, the deliveries are still marked sent – never mailed twice – and
@@ -304,7 +305,7 @@ export async function sendNewsletterToUser({
     let overview = null
     if (batch.mode === 'daily' && summarizeDigest && items.length >= MIN_OVERVIEW_ITEMS) {
       try {
-        overview = (await summarizeDigest(items, normalizeSummaryStyle(user))) ?? null
+        overview = (await summarizeDigest(items, normalizeSummaryStyle(user), { editionDate: now })) ?? null
       } catch (err) {
         try { onOverviewError(err) } catch { /* reporting must not block the delivery */ }
       }

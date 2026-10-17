@@ -8,6 +8,9 @@
 // paragraph per category in the user's order. It is built from the stored summaries and
 // their metadata only, never from transcripts, so cost and context stay bounded. Social posts
 // (Kanban #39) are mailed unchanged without a summary, so the overview never includes them.
+// Since NIAS-55 the introduction ("Auf einen Blick") is bound to the edition: the prompt names
+// its date and asks for a concrete angle of exactly this selection, and the parser keeps only
+// cited introduction sentences without long-term arcs the cited items do not carry.
 // Dependency-free: the OpenRouter client is injected.
 
 import { buildNewsletterCompletionOptions } from '../cron/newsletter-request.mjs'
@@ -36,6 +39,17 @@ const MAX_PARAGRAPH_SENTENCES = 4
 const MAX_PARAGRAPH_CHARS = 600
 export const MAX_OVERVIEW_CHARS = 4000
 export const DIGEST_OVERVIEW_TIMEOUT_MS = 90_000
+
+/** Time zone of the edition date in the overview prompt (NIAS-55). */
+const EDITION_TIME_ZONE = 'Europe/Berlin'
+const EDITION_DATE_FORMAT = new Intl.DateTimeFormat('de-DE', {
+  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: EDITION_TIME_ZONE,
+})
+
+/** The edition date as German text in Berlin time ("Samstag, 17. Oktober 2026"); null if invalid. */
+export function formatEditionDate(date) {
+  return date instanceof Date && !Number.isNaN(date.getTime()) ? EDITION_DATE_FORMAT.format(date) : null
+}
 
 /** Website (RSS) articles are shown with at most this many sentences. */
 export const MAX_WEBSITE_SENTENCES = 3
@@ -264,15 +278,16 @@ export function selectOverviewItems(items) {
  * statements, reflection – each capped) and metadata of the selected items (see
  * selectOverviewItems), the weighting rule and the user's style. No transcripts or article
  * texts. Every point of the answer has to name the numbers of the items it is drawn from.
+ * `editionDate` (NIAS-55) dates the edition in the overview by category.
  */
-export function buildDigestOverviewPrompt(items, style) {
+export function buildDigestOverviewPrompt(items, style, { editionDate = null } = {}) {
   const summarised = (items ?? []).filter(hasSummaryContent)
   const included = selectOverviewItems(items)
   const omitted = summarised.length - included.length
   const omittedNote = omitted > 0
     ? `\n\n(${omitted} weitere Inhalte stehen im Digest, sind hier aber aus Platzgründen nicht aufgeführt; erwähne sie nicht.)`
     : ''
-  if (hasOverviewCategories(included)) return buildCategoryOverviewPrompt(included, omittedNote, style)
+  if (hasOverviewCategories(included)) return buildCategoryOverviewPrompt(included, omittedNote, style, formatEditionDate(editionDate))
 
   return `Du schreibst den Überblick am Anfang meines Castletter-Digests: eine integrierte Management-Zusammenfassung über alle unten aufgeführten Inhalte (Podcast-Episoden, YouTube-Videos, Website-Artikel). Grundlage sind ausschließlich die bereits erstellten Einzelzusammenfassungen und ihre Metadaten. Die vollständigen Einzelzusammenfassungen stehen im Digest direkt unter deinem Überblick – dein Überblick ersetzt sie nicht.
 
@@ -326,9 +341,10 @@ function overviewCategories(items) {
 /**
  * Prompt for the overview by category (Kanban #50): the items grouped under their category
  * (numbered consecutively in digest order), one introduction across all categories and one
- * paragraph per category, categories addressed by their key `K<n>` only.
+ * paragraph per category, categories addressed by their key `K<n>` only. The introduction is
+ * shown as "Auf einen Blick" and asked for a concrete angle of this dated edition (NIAS-55).
  */
-function buildCategoryOverviewPrompt(included, omittedNote, style) {
+function buildCategoryOverviewPrompt(included, omittedNote, style, editionDate) {
   const categories = overviewCategories(included)
   const listing = categories.map(({ category, key }) => {
     const heading = category ? `### Kategorie ${key}: ${clip(category.name, MAX_CATEGORY_NAME_CHARS)}` : '### Weitere Quellen (ohne Kategorie)'
@@ -345,7 +361,11 @@ function buildCategoryOverviewPrompt(included, omittedNote, style) {
   return `Du schreibst den Überblick am Anfang meines Castletter-Digests: eine integrierte Management-Zusammenfassung über alle unten aufgeführten Inhalte (Podcast-Episoden, YouTube-Videos, Website-Artikel), gegliedert nach meinen eigenen Kategorien. Grundlage sind ausschließlich die bereits erstellten Einzelzusammenfassungen und ihre Metadaten. Die vollständigen Einzelzusammenfassungen stehen im Digest direkt unter deinem Überblick – dein Überblick ersetzt sie nicht.
 
 Deine Aufgabe ist Synthese, keine Wiederholung:
-- Die Einleitung bringt die wichtigsten Highlights aus allen Kategorien, das Wichtigste zuerst. Stelle Zusammenhänge zwischen Kategorien nur, wenn die Inhalte sie wirklich tragen.
+- Die Einleitung erscheint als „Auf einen Blick“ und ist ein Blick auf genau diese eine Ausgabe: Sie beginnt mit dem konkreten Tageswinkel – dem, was genau diese Auswahl heute ausmacht, etwa ein Ereignis, eine Entscheidung, eine Zahl oder ein Streitpunkt, den mehrere Inhalte aufgreifen, oder der auffälligste Einzelbefund. Danach bringt sie die wichtigsten Highlights aus allen Kategorien, das Wichtigste zuerst. Stelle Zusammenhänge zwischen Kategorien nur, wenn die Inhalte sie wirklich tragen.
+- Jeder Satz der Einleitung enthält mindestens einen konkreten Anker aus den heutigen Inhalten: einen Namen, ein Ereignis, eine Zahl, eine Entscheidung oder einen Titel.
+- Prüfe jeden Satz der Einleitung: Könnte er morgen mit anderen Inhalten fast unverändert wieder stehen, ist er zu allgemein – ersetze ihn durch das Konkrete von heute oder streiche ihn.
+- Keine großen Bögen über Jahre, Jahrzehnte oder Epochen („seit Jahren“, „in diesem Jahrzehnt“, „Zeitenwende“, „immer mehr“, „zunehmend“) und keine allgemeinen Themen- oder Trendaussagen, es sei denn, ein heutiger Inhalt belegt genau diesen Bogen ausdrücklich.
+- Tonalität, Beispiele und Gewichtung der Einleitung folgen der heutigen Auswahl: Was heute viel Raum und hohe Priorität hat, steht vorn; was heute nicht vorkommt, kommt nicht vor – auch nicht als Hintergrund oder Vergleich.
 - Danach folgt je Kategorie ein kurzer Absatz in Prosa (keine Stichpunkte) mit dem Konkreten aus dieser Kategorie.
 - Jeder Satz nennt konkret, worum es geht: wer, was, welche Zahl, Entscheidung oder Position – so, wie es in den Inhalten steht. Keine Floskeln und keine allgemeine Lagebeschreibung, keine Sätze wie „In der Kategorie X ging es um …“.
 - Belege jede Aussage: Beende jeden Satz mit den Nummern der Inhalte, aus denen er stammt, im Format [1] oder [2][5]. Nur Nummern aus der Liste unten, nur Inhalte, die den Satz wirklich tragen; in einem Kategorie-Absatz nur Nummern von Inhalten dieser Kategorie.
@@ -360,14 +380,14 @@ Das gilt für die Highlights der Einleitung und innerhalb jeder Kategorie. Fehlt
 
 Länge: Einleitung höchstens 5 Sätze, je Kategorie 2–4 Sätze; der ganze Überblick insgesamt höchstens etwa 350 Wörter.
 
-Inhalte (${included.length}):
+${editionDate ? `Ausgabe: ${editionDate} (die Inhalte unten sind die Auswahl dieser Ausgabe)\n\n` : ''}Inhalte (${included.length}):
 
 ${listing}${omittedNote}
 
 Erstelle folgende Struktur (exakt diese Überschriften in dieser Reihenfolge verwenden, nichts davor; Kategorien nur mit ihrer Kennung K…):
 
 ## Einleitung
-[2–5 Sätze Prosa: die wichtigsten Highlights aus allen Kategorien, Podcasts und YouTube zuerst; jeder Satz mit Nummern am Ende, z. B. [1][3]]
+[2–5 Sätze Prosa: zuerst der konkrete Tageswinkel dieser Ausgabe, dann die wichtigsten Highlights aus allen Kategorien, Podcasts und YouTube zuerst; jeder Satz mit Nummern am Ende, z. B. [1][3]]
 
 ${sections.join('\n\n')}
 
@@ -407,22 +427,45 @@ function overviewSource(item) {
 }
 
 /**
- * One overview point: its text without the reference markers and the linked items its
- * numbers refer to (unique, in order of mention). Numbers outside the list and items without
- * an http(s) link are dropped.
+ * The linked items the numbers of a text refer to (unique, in order of mention). Numbers
+ * outside the list, items rejected by `accepts` and items without an http(s) link are dropped.
  */
+function citedItems(text, items, accepts = () => true) {
+  const cited = []
+  for (const group of text.match(REFERENCE_GROUP) ?? []) {
+    for (const number of group.match(/\d+/g)) {
+      const item = items[Number(number) - 1]
+      if (item && accepts(item) && isHttpUrl(item.audioUrl) && !cited.includes(item)) cited.push(item)
+    }
+  }
+  return cited
+}
+
+/** One overview point: its text without the reference markers and the items it links to. */
 function resolvePoint(bullet, items, accepts = () => true) {
-  const numbers = []
-  for (const group of bullet.match(REFERENCE_GROUP) ?? []) {
-    for (const number of group.match(/\d+/g)) numbers.push(Number(number))
-  }
-  const sources = []
-  for (const number of numbers) {
-    const item = items[number - 1]
-    if (!item || !accepts(item) || !isHttpUrl(item.audioUrl) || sources.some((source) => source.item === item)) continue
-    sources.push({ item, ...overviewSource(item) })
-  }
-  return { text: withoutReferences(bullet), sources: sources.map(({ item, ...source }) => source) }
+  return { text: withoutReferences(bullet), sources: citedItems(bullet, items, accepts).map(overviewSource) }
+}
+
+// Long-term, decade and trend arcs (NIAS-55): word stems that make an introduction sentence
+// fit any day. Such a sentence stays only if a cited item uses the same stem itself.
+const LONG_TERM_ARCS = [
+  'jahrzehnt', 'dekade', 'seit (?:vielen |einigen )?jahren', 'seit langem', 'zeitenwende', 'epoche',
+  'zunehmend', 'immer (?:mehr|stärker|häufiger|weiter)', 'mehr denn je', 'in zeiten (?:von|wie|des|der)',
+  'unserer zeit', 'unsere(?:r)? gesellschaft', 'langfristig', 'megatrend', 'im (?:großen )?wandel', 'umbruch',
+  'decade', 'in recent years', 'increasingly', 'more than ever',
+].map((stem) => new RegExp(`(?<!\\p{L})${stem}`, 'iu'))
+
+function itemText(item) {
+  return [
+    item.podcastTitle, item.episodeTitle, item.intro, item.reflection,
+    ...cleanList(item.bulletPoints), ...cleanList(item.keyTakeaways),
+  ].filter((part) => typeof part === 'string').join(' ')
+}
+
+/** Whether a sentence draws a long-term arc that none of its cited items carries (NIAS-55). */
+function hasUnbackedArc(text, cited) {
+  const backing = cited.map(itemText)
+  return LONG_TERM_ARCS.some((arc) => arc.test(text) && !backing.some((source) => arc.test(source)))
 }
 
 function resolvePoints(bullets, items) {
@@ -467,8 +510,10 @@ const TRAILING_REFERENCES = /([.!?…]+)((?:\s*\[\s*\d+(?:\s*[,;]\s*\d+)*\s*\])+
  * One paragraph of the category overview, bounded to `maxSentences` sentences and `maxChars`
  * characters: sentences whose numbers all fail (outside the list, without link or rejected by
  * `accepts`) are dropped, the rest keeps its linked items. Null without any linked item.
+ * `editionBound` (the introduction, NIAS-55) also drops sentences without a citation and
+ * sentences with a long-term arc their cited items do not carry.
  */
-function resolveParagraph(body, items, { accepts, maxSentences, maxChars }) {
+function resolveParagraph(body, items, { accepts, maxSentences, maxChars, editionBound = false }) {
   const sentences = []
   let length = 0
   for (const sentence of splitSentences(body.replace(TRAILING_REFERENCES, '$2$1'))) {
@@ -477,6 +522,7 @@ function resolveParagraph(body, items, { accepts, maxSentences, maxChars }) {
     REFERENCE_GROUP.lastIndex = 0
     const point = resolvePoint(sentence, items, accepts)
     if (!point.text || (cited && point.sources.length === 0)) continue
+    if (editionBound && (!cited || hasUnbackedArc(point.text, citedItems(sentence, items, accepts)))) continue
     const added = point.text.length + (sentences.length ? 1 : 0)
     if (length + added > maxChars) break
     sentences.push(sentence)
@@ -499,7 +545,7 @@ function parseCategoryOverview(markdown, items) {
   let budget = MAX_OVERVIEW_CHARS
 
   const intro = resolveParagraph(bodyOf((heading) => /^einleitung\b/i.test(heading)), items, {
-    accepts: () => true, maxSentences: MAX_INTRO_SENTENCES, maxChars: Math.min(MAX_INTRO_CHARS, budget),
+    accepts: () => true, maxSentences: MAX_INTRO_SENTENCES, maxChars: Math.min(MAX_INTRO_CHARS, budget), editionBound: true,
   })
   if (intro) budget -= intro.text.length
 
@@ -522,17 +568,17 @@ function parseCategoryOverview(markdown, items) {
 }
 
 /**
- * Creates `summarizeDigest(items, style)` for the send step: one model call per digest with
- * at least MIN_OVERVIEW_ITEMS summarised items, otherwise null without a call. Returns the
- * parsed overview with `itemCount` (how many summaries it is based on), or null.
+ * Creates `summarizeDigest(items, style, { editionDate })` for the send step: one model call
+ * per digest with at least MIN_OVERVIEW_ITEMS summarised items, otherwise null without a call.
+ * Returns the parsed overview with `itemCount` (how many summaries it is based on), or null.
  */
 export function createDigestOverviewGenerator({ openrouter, model, timeoutMs = DIGEST_OVERVIEW_TIMEOUT_MS }) {
-  return async function summarizeDigest(items, style) {
+  return async function summarizeDigest(items, style, options = {}) {
     const included = selectOverviewItems(items)
     if (included.length < MIN_OVERVIEW_ITEMS) return null
 
     const completion = await openrouter.chat.completions.create(
-      buildNewsletterCompletionOptions(model, [{ role: 'user', content: buildDigestOverviewPrompt(items, style) }]),
+      buildNewsletterCompletionOptions(model, [{ role: 'user', content: buildDigestOverviewPrompt(items, style, options) }]),
       { timeout: timeoutMs, maxRetries: 1 }
     )
     const overview = parseDigestOverview(completion.choices?.[0]?.message?.content, included)
