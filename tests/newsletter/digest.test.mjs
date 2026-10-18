@@ -21,6 +21,7 @@ import {
   splitSentences,
   limitSentences,
   websiteSummary,
+  formatEditionDate,
 } from '../../src/lib/newsletter/digest.mjs'
 import { buildStyleInstructions } from '../../src/lib/newsletter/summary-style.mjs'
 
@@ -608,6 +609,67 @@ test('Kanban #50: generator – one model call for the whole digest with categor
   await assert.rejects(() => failing(CATEGORISED), /timeout/)
   // An unusable answer gives no overview.
   assert.equal(await createDigestOverviewGenerator({ openrouter: fakeOpenRouter('## Kernthemen\n- Alt [1].'), model: 'm' })(CATEGORISED), null)
+})
+
+test('NIAS-55: "Auf einen Blick" is asked for a concrete angle of this edition, dated, never a generic arc', () => {
+  const prompt = buildDigestOverviewPrompt(CATEGORISED, null, { editionDate: new Date('2026-10-17T05:00:00.000Z') })
+  // The edition date is part of the prompt, right before the items of this edition.
+  assertInOrder(prompt, ['Ausgabe: Samstag, 17. Oktober 2026', 'Inhalte (6):'])
+  // A concrete angle of exactly this selection, every sentence anchored in today's items.
+  assert.match(prompt, /„Auf einen Blick“/)
+  assert.match(prompt, /konkreten Tageswinkel/)
+  assert.match(prompt, /mindestens einen konkreten Anker aus den heutigen Inhalten/)
+  // Next-day test and no long-term or decade arcs unless an item of today carries them.
+  assert.match(prompt, /Könnte er morgen mit anderen Inhalten fast unverändert wieder stehen/)
+  assert.match(prompt, /Keine großen Bögen über Jahre, Jahrzehnte oder Epochen/)
+  assert.match(prompt, /es sei denn, ein heutiger Inhalt belegt genau diesen Bogen ausdrücklich/)
+  // Tone, examples and weighting follow today's selection.
+  assert.match(prompt, /Tonalität, Beispiele und Gewichtung der Einleitung folgen der heutigen Auswahl/)
+  const structure = prompt.slice(prompt.indexOf('Erstelle folgende Struktur'))
+  assert.match(structure, /## Einleitung\n\[2–5 Sätze Prosa: zuerst der konkrete Tageswinkel dieser Ausgabe/)
+
+  // Without a date there is no date line; the overview without categories stays unchanged.
+  assert.doesNotMatch(buildDigestOverviewPrompt(CATEGORISED, null), /^Ausgabe:/m)
+  const plain = CATEGORISED.map(({ category, ...rest }) => rest)
+  assert.equal(buildDigestOverviewPrompt(plain, null, { editionDate: new Date() }), buildDigestOverviewPrompt(plain, null))
+})
+
+test('NIAS-55: formatEditionDate gives the German date in Berlin time, null for missing or invalid dates', () => {
+  assert.equal(formatEditionDate(new Date('2026-10-17T05:00:00.000Z')), 'Samstag, 17. Oktober 2026')
+  // 23:30 UTC is already the next day in Berlin.
+  assert.equal(formatEditionDate(new Date('2026-10-16T23:30:00.000Z')), 'Samstag, 17. Oktober 2026')
+  for (const missing of [undefined, null, 'gestern', new Date('invalid')]) assert.equal(formatEditionDate(missing), null)
+})
+
+test('NIAS-55: "Auf einen Blick" keeps only cited sentences and drops long-term arcs the items do not carry', () => {
+  const items = selectOverviewItems(CATEGORISED)
+  const overview = parseDigestOverview(`## Einleitung
+Die Wahl ist entschieden [1]. Insgesamt zeigt sich, wie sehr sich die Welt verändert. Seit Jahren wächst der Druck auf die Politik [1][2]. Das Chip-Gesetz verschärft den zunehmenden Wettbewerb [4].
+
+## Kategorie K1
+Die Wahl ist entschieden, seit Jahren umkämpft [1].`, items)
+  assert.equal(overview.intro.text, 'Die Wahl ist entschieden.')
+  assert.deepEqual(ids(overview.intro.sources), ['n-pod1'])
+  // Category paragraphs are not affected.
+  assert.equal(overview.categories[0].text, 'Die Wahl ist entschieden, seit Jahren umkämpft.')
+
+  // An arc an item of today states itself (same marker in a cited item) stays.
+  const backed = selectOverviewItems(CATEGORISED.map((it) => (it.id === 'n-pod1'
+    ? { ...it, keyTakeaways: ['Die Partei hat seit Jahren keine Mehrheit mehr gehabt.'] }
+    : it)))
+  const kept = parseDigestOverview('## Einleitung\nSeit Jahren ohne Mehrheit, jetzt gewinnt die Partei [1]. Ein Jahrzehnt der Krisen geht zu Ende [1].', backed)
+  assert.equal(kept.intro.text, 'Seit Jahren ohne Mehrheit, jetzt gewinnt die Partei.')
+  // The marker has to be in a cited item: another item's text does not back the arc.
+  assert.equal(parseDigestOverview('## Einleitung\nSeit Jahren wartet die Branche auf Chips [4].', backed), null)
+  // Only generic sentences left → no introduction.
+  assert.equal(parseDigestOverview('## Einleitung\nZunehmend unruhige Zeiten [1][4].\n\n## Kategorie K2\nChips [4].', items).intro, null)
+})
+
+test('NIAS-55: generator passes the edition date into the prompt', async () => {
+  const openrouter = fakeOpenRouter(CATEGORY_ANSWER)
+  const summarizeDigest = createDigestOverviewGenerator({ openrouter, model: 'm' })
+  await summarizeDigest(CATEGORISED, null, { editionDate: new Date('2026-10-17T05:00:00.000Z') })
+  assert.match(openrouter.requests[0].options.messages[0].content, /Ausgabe: Samstag, 17\. Oktober 2026/)
 })
 
 function assertInOrder(text, markers) {
