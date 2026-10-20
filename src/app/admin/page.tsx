@@ -164,15 +164,10 @@ export default async function AdminPage() {
         )}
 
         <AiEndpointsSection
-          endpoints={aiEndpoints.endpoints.map((endpoint): AiEndpointStatus => {
-            const withDate = <T extends { updatedAt: string | null }>(status: T) => ({
-              ...status,
-              updatedAtText: status.updatedAt ? formatDate(status.updatedAt) : null,
-            })
-            return {
-              ...(withDate(endpoint) as Omit<AiEndpointStatus, 'fallback'>),
-              fallback: endpoint.fallback ? (withDate(endpoint.fallback) as AiEndpointSlotStatus) : null,
-            }
+          endpoints={aiEndpoints.endpoints.map(({ purpose, primary, fallback }): AiEndpointStatus => {
+            const withDate = (status: Omit<AiEndpointSlotStatus, 'updatedAtText'> | null) =>
+              status && { ...status, updatedAtText: status.updatedAt ? formatDate(status.updatedAt) : null }
+            return { purpose: purpose as AiEndpointStatus['purpose'], primary: withDate(primary), fallback: withDate(fallback) }
           })}
           loadError={aiEndpoints.error}
         />

@@ -1,13 +1,13 @@
 // AI endpoints per purpose (NIAS-58): base URL, model and API key of the OpenAI-compatible
 // server used for transcription and for text generation are stored in Supabase
-// (`ai_endpoints`, one row per purpose) instead of being fixed in code. A purpose without a row
-// keeps the previous environment behaviour (OpenRouter + OPENROUTER_*). API keys are stored
+// (`ai_endpoints`, one row per purpose) instead of being fixed in code. There is no default
+// from the environment (NIAS-63): a purpose without a row is not set up and its work fails
+// with a clear error until an endpoint is entered in the admin area. API keys are stored
 // AES-256-GCM-encrypted with AI_ENDPOINTS_ENCRYPTION_KEY. A second row per purpose (slot
 // 'fallback', NIAS-62) is tried when the primary endpoint fails. Dependency-free (node:crypto
 // only), shared by the Vercel routes, the admin area and the Docker worker.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { getOpenRouterConfig, OPENROUTER_BASE_URL } from '../cron/openrouter-config.mjs'
 
 export const AI_ENDPOINTS_TABLE = 'ai_endpoints'
 export const AI_PURPOSES = ['transcription', 'text_generation']
@@ -23,8 +23,6 @@ export const LIMITS = { name: 100, baseUrl: 500, model: 200, apiKey: 1000 }
 const CIPHER = 'aes-256-gcm'
 const CIPHERTEXT_VERSION = 'v1'
 const IV_BYTES = 12
-// PostgREST: table not in the schema cache / Postgres: undefined_table.
-const MISSING_TABLE_CODES = new Set(['PGRST205', '42P01'])
 
 /** Configuration error whose message never contains key material. */
 export class AiEndpointError extends Error {
@@ -144,50 +142,25 @@ function normalizeBaseUrl(raw) {
   return url.toString().replace(/\/+$/, '')
 }
 
-/** The previous, environment-only configuration (OpenRouter) for each purpose. */
-export function getEnvAiEndpoints(env = process.env) {
-  const openrouter = getOpenRouterConfig(env)
-  const fromEnv = (purpose, model) => ({
-    purpose,
-    slot: 'primary',
-    source: 'env',
-    name: 'OpenRouter',
-    baseURL: OPENROUTER_BASE_URL,
-    apiKey: openrouter.client.apiKey,
-    model,
-  })
-  return {
-    transcription: fromEnv('transcription', openrouter.transcriptionModel),
-    text_generation: fromEnv('text_generation', openrouter.newsletterModel),
-  }
-}
-
 /**
  * Reads the stored endpoints and returns `{ transcription, text_generation }`, each the primary
- * `{ purpose, slot, source: 'database' | 'env', name, baseURL, apiKey, model, fallback }` with
- * `fallback` the stored fallback endpoint (same shape, without `fallback`) or null. A purpose
- * without a primary row — or a database without the table yet — uses the environment as
- * primary. Any other read or decryption failure throws an AiEndpointError, never with key
- * material in it.
+ * `{ purpose, slot, name, baseURL, apiKey, model, fallback }` — `fallback` the stored fallback
+ * endpoint (same shape, without `fallback`) or null — or null when the purpose has no primary
+ * endpoint (a fallback alone is not used). A read or decryption failure throws an
+ * AiEndpointError, never with key material in it.
  */
 export async function resolveAiEndpoints({ supabase, env = process.env }) {
-  const defaults = getEnvAiEndpoints(env)
-  const endpoints = Object.fromEntries(AI_PURPOSES.map((purpose) => [purpose, { ...defaults[purpose], fallback: null }]))
-
   const { data, error } = await supabase
     .from(AI_ENDPOINTS_TABLE)
     .select('purpose, slot, name, base_url, model, api_key_encrypted')
-  if (error) {
-    if (MISSING_TABLE_CODES.has(error.code)) return endpoints
-    throw new AiEndpointError(`KI-Endpunkte konnten nicht gelesen werden: ${error.message}`)
-  }
+  if (error) throw new AiEndpointError(`KI-Endpunkte konnten nicht gelesen werden: ${error.message}`)
 
-  const rows = (data ?? []).filter((row) => isAiPurpose(row.purpose) && isAiSlot(row.slot))
-  for (const row of rows) {
-    const endpoint = {
+  const stored = {}
+  for (const row of data ?? []) {
+    if (!isAiPurpose(row.purpose) || !isAiSlot(row.slot)) continue
+    stored[`${row.purpose}:${row.slot}`] = {
       purpose: row.purpose,
       slot: row.slot,
-      source: 'database',
       name: row.name,
       baseURL: row.base_url,
       apiKey: row.api_key_encrypted
@@ -195,10 +168,18 @@ export async function resolveAiEndpoints({ supabase, env = process.env }) {
         : KEYLESS_API_KEY,
       model: row.model,
     }
-    if (row.slot === 'fallback') endpoints[row.purpose].fallback = endpoint
-    else endpoints[row.purpose] = { ...endpoint, fallback: endpoints[row.purpose].fallback }
   }
-  return endpoints
+  return Object.fromEntries(AI_PURPOSES.map((purpose) => {
+    const primary = stored[`${purpose}:primary`]
+    return [purpose, primary ? { ...primary, fallback: stored[`${purpose}:fallback`] ?? null } : null]
+  }))
+}
+
+/** The endpoint of one purpose from `resolveAiEndpoints`; throws when it is not set up. */
+export function requireAiEndpoint(endpoints, purpose) {
+  const endpoint = endpoints[purpose]
+  if (!endpoint) throw new AiEndpointError(`Kein KI-Endpunkt für ${purpose} hinterlegt (Admin-Bereich → KI-Endpunkte)`)
+  return endpoint
 }
 
 /**
@@ -233,7 +214,7 @@ export function describeAiEndpoint(endpoint) {
   try {
     host = new URL(endpoint.baseURL).host
   } catch {}
-  return { purpose: endpoint.purpose, slot: endpoint.slot, source: endpoint.source, name: endpoint.name, model: endpoint.model, host }
+  return { purpose: endpoint.purpose, slot: endpoint.slot, name: endpoint.name, model: endpoint.model, host }
 }
 
 function additionalData(purpose, slot) {

@@ -1,5 +1,7 @@
-// Admin side of the AI endpoints (NIAS-59): status per purpose for the admin page, save/reset
-// and a connection test, each for the primary or the optional fallback slot (NIAS-62). API keys never leave the server — the page only gets the stored hint.
+// Admin side of the AI endpoints (NIAS-59): status per purpose for the admin page, save/delete
+// and a connection test, each for the primary or the optional fallback slot (NIAS-62). There
+// is no default from the environment (NIAS-63). API keys never leave the server — the page only
+// gets the stored hint.
 // Dependency-free with injected Supabase client (service role) and fetch, so it runs under
 // node:test; the API routes in src/app/api/admin/ai-endpoints only wire it up.
 
@@ -11,57 +13,58 @@ import {
   apiKeyHint,
   decryptApiKey,
   encryptApiKey,
-  getEnvAiEndpoints,
   isAiPurpose,
   isAiSlot,
   validateEndpointInput,
 } from './endpoints.mjs'
-import { OPENROUTER_BASE_URL } from '../cron/openrouter-config.mjs'
 
 export const CONNECTION_TEST_TIMEOUT_MS = 10_000
 
 /**
- * Display state per purpose (in AI_PURPOSES order): the stored primary endpoint, or the
- * environment default, with `fallback` the stored fallback endpoint or null. Returns
- * `{ endpoints, error }`; on a read error the list shows the defaults and `error` is set, so
- * the page still renders.
+ * Display state per purpose (in AI_PURPOSES order): `{ purpose, primary, fallback }`, each the
+ * stored endpoint or null (null primary: the purpose is not set up). Returns
+ * `{ endpoints, error }`; on a read error both are null and `error` is set, so the page still
+ * renders.
  */
-export async function listEndpointStatus(supabase, env = process.env) {
-  const defaults = getEnvAiEndpoints(env)
+export async function listEndpointStatus(supabase) {
   const { data, error } = await supabase
     .from(AI_ENDPOINTS_TABLE)
     .select('purpose, slot, name, base_url, model, api_key_encrypted, api_key_hint, updated_at')
   const rows = new Map((data ?? []).map((row) => [`${row.purpose}:${row.slot}`, row]))
-  const fromRow = (row) => ({
-    purpose: row.purpose, slot: row.slot, source: 'database', name: row.name, baseUrl: row.base_url, model: row.model,
-    hasApiKey: Boolean(row.api_key_encrypted), apiKeyHint: row.api_key_hint, updatedAt: row.updated_at,
-  })
-
-  const endpoints = AI_PURPOSES.map((purpose) => {
-    const primary = rows.get(`${purpose}:primary`)
-    const fallback = rows.get(`${purpose}:fallback`)
-    const envDefault = defaults[purpose]
+  const status = (purpose, slot) => {
+    const row = rows.get(`${purpose}:${slot}`)
+    if (!row) return null
     return {
-      ...(primary ? fromRow(primary) : {
-        purpose, slot: 'primary', source: 'env', name: envDefault.name, baseUrl: envDefault.baseURL, model: envDefault.model,
-        hasApiKey: Boolean(envDefault.apiKey), apiKeyHint: null, updatedAt: null,
-      }),
-      fallback: fallback ? fromRow(fallback) : null,
+      purpose, slot, name: row.name, baseUrl: row.base_url, model: row.model,
+      hasApiKey: Boolean(row.api_key_encrypted), apiKeyHint: row.api_key_hint, updatedAt: row.updated_at,
     }
-  })
+  }
+
+  const endpoints = AI_PURPOSES.map((purpose) => ({ purpose, primary: status(purpose, 'primary'), fallback: status(purpose, 'fallback') }))
   return { endpoints, error: error ? error.message : null }
 }
 
 /**
  * Saves the endpoint of one purpose and slot. `apiKey` empty keeps the stored key (a new row
  * starts keyless), `clearApiKey: true` stores none, a new key is encrypted with
- * AI_ENDPOINTS_ENCRYPTION_KEY.
+ * AI_ENDPOINTS_ENCRYPTION_KEY. A fallback needs a stored primary endpoint of its purpose.
  * Returns `{ ok: true }` or `{ ok: false, status, code, fields? }`.
  */
 export async function saveEndpoint(supabase, input, env = process.env) {
   const validated = validateEndpointInput(input)
   if (!validated.ok) return { ok: false, status: 400, code: 'invalid', fields: Object.keys(validated.errors) }
   const { purpose, slot, name, baseUrl, model, apiKey } = validated.value
+
+  if (slot === 'fallback') {
+    const { data, error } = await supabase
+      .from(AI_ENDPOINTS_TABLE)
+      .select('purpose')
+      .eq('purpose', purpose)
+      .eq('slot', 'primary')
+      .maybeSingle()
+    if (error) return { ok: false, status: 500, code: 'saveFailed' }
+    if (!data) return { ok: false, status: 400, code: 'primaryMissing' }
+  }
 
   const row = { purpose, slot, name, base_url: baseUrl, model }
   if (apiKey) {
@@ -75,17 +78,6 @@ export async function saveEndpoint(supabase, input, env = process.env) {
   } else if (input.clearApiKey === true) {
     row.api_key_encrypted = null
     row.api_key_hint = null
-  } else if (baseUrl === OPENROUTER_BASE_URL) {
-    // Without a new key the stored key stays. A new OpenRouter row would start keyless and
-    // break the purpose (the env key is not copied), so it needs the key entered.
-    const { data, error } = await supabase
-      .from(AI_ENDPOINTS_TABLE)
-      .select('purpose')
-      .eq('purpose', purpose)
-      .eq('slot', slot)
-      .maybeSingle()
-    if (error) return { ok: false, status: 500, code: 'saveFailed' }
-    if (!data) return { ok: false, status: 400, code: 'invalid', fields: ['apiKey'] }
   }
 
   const { error } = await supabase.from(AI_ENDPOINTS_TABLE).upsert(row, { onConflict: 'purpose,slot' })
@@ -94,21 +86,23 @@ export async function saveEndpoint(supabase, input, env = process.env) {
 }
 
 /**
- * Removes the endpoint of one purpose and slot: the primary falls back to the environment
- * default, a removed fallback means no fallback. The other slot stays.
+ * Deletes the endpoint of one purpose and slot. Deleting the primary endpoint deletes the
+ * fallback too and leaves the purpose not set up; deleting the fallback keeps the primary.
  */
-export async function resetEndpoint(supabase, purpose, slot = 'primary') {
+export async function deleteEndpoint(supabase, purpose, slot = 'primary') {
   if (!isAiPurpose(purpose)) return { ok: false, status: 400, code: 'invalid', fields: ['purpose'] }
   if (!isAiSlot(slot)) return { ok: false, status: 400, code: 'invalid', fields: ['slot'] }
-  const { error } = await supabase.from(AI_ENDPOINTS_TABLE).delete().eq('purpose', purpose).eq('slot', slot)
+  let query = supabase.from(AI_ENDPOINTS_TABLE).delete().eq('purpose', purpose)
+  if (slot === 'fallback') query = query.eq('slot', 'fallback')
+  const { error } = await query
   if (error) return { ok: false, status: 500, code: 'saveFailed' }
   return { ok: true }
 }
 
 /**
  * Tests the entered endpoint with `GET <baseUrl>/models`. An empty key field uses the stored
- * key of that purpose and slot only if the base URL is unchanged — a stored key is never sent to a new
- * host. Redirects are not followed (the bearer must not travel on). Returns
+ * key of that purpose and slot only if the base URL is unchanged — a stored key is never sent
+ * to a new host. Redirects are not followed (the bearer must not travel on). Returns
  * `{ ok: true, status, modelFound }` (`modelFound` null when the server lists no models) or
  * `{ ok: false, code, status?, detail? }`; `detail` never contains the key.
  */
@@ -160,12 +154,6 @@ async function storedKeyForUrl(supabase, purpose, slot, baseUrl, env) {
   if (error) throw new Error(error.message)
   if (data?.api_key_encrypted && data.base_url === baseUrl) {
     return decryptApiKey(data.api_key_encrypted, { masterKey: env[MASTER_KEY_ENV], purpose, slot })
-  }
-  if (!data && slot === 'primary') {
-    // No stored primary endpoint: the environment default (OpenRouter) is in use — reuse its
-    // key only for its own URL. A fallback never borrows it (saving one needs its own key).
-    const fallback = getEnvAiEndpoints(env)[purpose]
-    if (fallback.apiKey && fallback.baseURL === baseUrl) return fallback.apiKey
   }
   return null
 }

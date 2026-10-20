@@ -5,7 +5,6 @@ import { loadWorkerConfig, DEFAULTS } from '../../worker/config.mjs'
 const REQUIRED = {
   SUPABASE_URL: 'https://example.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'service-role',
-  OPENROUTER_API_KEY: 'or-key',
 }
 
 test('applies defaults when only the required secrets are set', () => {
@@ -19,7 +18,8 @@ test('applies defaults when only the required secrets are set', () => {
   assert.equal(config.transcodeTimeoutMs, 600_000)
   assert.equal(config.ffmpegPath, 'ffmpeg')
   assert.equal(config.heartbeatUrl, null)
-  assert.equal(config.openrouter.transcriptionModel, 'openai/whisper-large-v3')
+  // NIAS-63: AI endpoints come only from the admin area, nothing from OPENROUTER_*.
+  assert.equal('openrouter' in config, false)
 })
 
 test('accepts NEXT_PUBLIC_SUPABASE_URL so the app .env can be reused', () => {
@@ -35,20 +35,18 @@ test('reads overrides', () => {
     TRANSCRIPTION_MAX_EPISODE_AGE_DAYS: '120',
     TRANSCRIPTION_MAX_ATTEMPTS: '5',
     TRANSCRIPTION_HEARTBEAT_URL: 'https://hooks.example/heartbeat',
-    OPENROUTER_TRANSCRIPTION_MODEL: 'openai/gpt-4o-mini-transcribe',
   })
 
   assert.equal(config.pollIntervalMs, 30_000)
   assert.equal(config.maxEpisodeAgeDays, 120)
   assert.equal(config.maxAttempts, 5)
   assert.equal(config.heartbeatUrl, 'https://hooks.example/heartbeat')
-  assert.equal(config.openrouter.transcriptionModel, 'openai/gpt-4o-mini-transcribe')
 })
 
 test('names missing secrets without echoing any values', () => {
   assert.throws(
     () => loadWorkerConfig({ SUPABASE_SERVICE_ROLE_KEY: 'geheim' }),
-    (err) => err.message === 'Fehlende Umgebungsvariablen: SUPABASE_URL, OPENROUTER_API_KEY'
+    (err) => err.message === 'Fehlende Umgebungsvariablen: SUPABASE_URL'
   )
 })
 
@@ -87,7 +85,6 @@ test('enabled newsletter pipeline requires RESEND_API_KEY and APP_URL', () => {
     fromEmail: 'castletter.io <newsletter@castletter.io>',
     settingsUrl: 'https://castletter.example/settings',
   })
-  assert.equal(config.openrouter.newsletterModel, 'google/gemini-2.5-flash')
 })
 
 test('feed check is off by default and runs every 30 minutes when enabled', () => {

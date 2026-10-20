@@ -63,7 +63,7 @@ async function main() {
   const supabase = createClient(config.supabaseUrl, config.serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
-  // Endpoint per purpose from the admin area (ai_endpoints), OpenRouter env as default.
+  // Endpoint per purpose from the admin area (ai_endpoints); there is no default (NIAS-63).
   const ai = createAiClients({
     getEndpoints: createAiEndpointResolver({ supabase, log }),
     createClient: (options) => new OpenAI(options),

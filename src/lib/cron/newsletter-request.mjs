@@ -1,4 +1,5 @@
-import { DEFAULT_NEWSLETTER_MODEL } from './openrouter-config.mjs'
+// Gemini 2.5 Flash spends the token budget on reasoning unless it is switched off.
+export const GEMINI_FLASH_MODEL = 'google/gemini-2.5-flash'
 
 /** Build the exact OpenRouter chat-completion options used for newsletters. */
 export function buildNewsletterCompletionOptions(model, messages) {
@@ -6,7 +7,7 @@ export function buildNewsletterCompletionOptions(model, messages) {
     model,
     max_tokens: 3000,
     temperature: 0.7,
-    ...(model === DEFAULT_NEWSLETTER_MODEL ? { reasoning: { effort: 'none' } } : {}),
+    ...(model === GEMINI_FLASH_MODEL ? { reasoning: { effort: 'none' } } : {}),
     messages,
   }
 }

@@ -11,7 +11,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
 // NIAS-59: one card per AI purpose. API keys never reach the browser — only the stored hint.
-// NIAS-62: below the primary endpoint an optional fallback, tried when the primary one fails.
+// NIAS-62: below the endpoint an optional fallback, tried when the endpoint fails.
+// NIAS-63: no default from the environment — a purpose without an endpoint is not set up.
 
 export type AiPurpose = 'transcription' | 'text_generation'
 export type AiSlot = 'primary' | 'fallback'
@@ -19,7 +20,6 @@ export type AiSlot = 'primary' | 'fallback'
 export interface AiEndpointSlotStatus {
   purpose: AiPurpose
   slot: AiSlot
-  source: 'database' | 'env'
   name: string
   baseUrl: string
   model: string
@@ -30,7 +30,9 @@ export interface AiEndpointSlotStatus {
   updatedAtText: string | null
 }
 
-export interface AiEndpointStatus extends AiEndpointSlotStatus {
+export interface AiEndpointStatus {
+  purpose: AiPurpose
+  primary: AiEndpointSlotStatus | null
   fallback: AiEndpointSlotStatus | null
 }
 
@@ -51,7 +53,7 @@ const FIELDS = ['name', 'baseUrl', 'model', 'apiKey'] as const
 
 export function AiEndpointsSection({ endpoints, loadError }: { endpoints: AiEndpointStatus[]; loadError: string | null }) {
   const t = useTranslations('admin.aiEndpoints')
-  // Kept here: a form remounts after every save/reset (new key) so it shows the new state.
+  // Kept here: a form remounts after every save/delete (new key) so it shows the new state.
   const [feedback, setFeedback] = useState<Record<string, Feedback>>({})
   const feedbackProps = (purpose: AiPurpose, slot: AiSlot) => ({
     feedback: feedback[`${purpose}:${slot}`] ?? null,
@@ -65,33 +67,39 @@ export function AiEndpointsSection({ endpoints, loadError }: { endpoints: AiEndp
         {loadError && <p className="text-sm text-red-700 mt-2">{t('loadError', { error: loadError })}</p>}
       </div>
       <div className="space-y-6">
-        {endpoints.map((endpoint) => (
-          <Card key={endpoint.purpose}>
+        {endpoints.map(({ purpose, primary, fallback }) => (
+          <Card key={purpose}>
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="text-lg">{t(`purpose_${endpoint.purpose}`)}</CardTitle>
-                {endpoint.source === 'database' ? (
-                  <Badge className="bg-green-100 text-green-800 hover:bg-green-100">{t('sourceDatabase')}</Badge>
+                <CardTitle className="text-lg">{t(`purpose_${purpose}`)}</CardTitle>
+                {primary ? (
+                  <Badge className="bg-green-100 text-green-800 hover:bg-green-100">{t('configured')}</Badge>
                 ) : (
-                  <Badge variant="secondary">{t('sourceEnv')}</Badge>
+                  <Badge className="bg-red-100 text-red-800 hover:bg-red-100">{t('notConfigured')}</Badge>
                 )}
               </div>
               <CardDescription>
-                {t(`purposeHint_${endpoint.purpose}`)}
-                {endpoint.updatedAtText && <> · {t('updatedAt', { date: endpoint.updatedAtText })}</>}
+                {t(`purposeHint_${purpose}`)}
+                {primary?.updatedAtText && <> · {t('updatedAt', { date: primary.updatedAtText })}</>}
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {!primary && <p className="text-sm text-red-700 mb-4">{t('notConfiguredHint')}</p>}
               <EndpointForm
-                key={`primary:${endpoint.source}:${endpoint.updatedAt}`}
-                endpoint={endpoint}
-                {...feedbackProps(endpoint.purpose, 'primary')}
+                key={`primary:${primary?.updatedAt ?? 'none'}`}
+                purpose={purpose}
+                slot="primary"
+                endpoint={primary}
+                {...feedbackProps(purpose, 'primary')}
               />
-              <FallbackBlock
-                key={`fallback:${endpoint.fallback?.updatedAt ?? 'none'}`}
-                endpoint={endpoint}
-                {...feedbackProps(endpoint.purpose, 'fallback')}
-              />
+              {primary && (
+                <FallbackBlock
+                  key={`fallback:${fallback?.updatedAt ?? 'none'}`}
+                  purpose={purpose}
+                  fallback={fallback}
+                  {...feedbackProps(purpose, 'fallback')}
+                />
+              )}
             </CardContent>
           </Card>
         ))}
@@ -100,18 +108,14 @@ export function AiEndpointsSection({ endpoints, loadError }: { endpoints: AiEndp
   )
 }
 
-function FallbackBlock({ endpoint, feedback, setFeedback }: {
-  endpoint: AiEndpointStatus
+function FallbackBlock({ purpose, fallback, feedback, setFeedback }: {
+  purpose: AiPurpose
+  fallback: AiEndpointSlotStatus | null
   feedback: Feedback
   setFeedback: (feedback: Feedback) => void
 }) {
   const t = useTranslations('admin.aiEndpoints')
   const [adding, setAdding] = useState(false)
-  const { fallback } = endpoint
-  const blank: AiEndpointSlotStatus = {
-    purpose: endpoint.purpose, slot: 'fallback', source: 'env', name: '', baseUrl: '', model: '',
-    hasApiKey: false, apiKeyHint: null, updatedAt: null, updatedAtText: null,
-  }
 
   return (
     <div className="mt-6 border-t pt-4">
@@ -125,7 +129,9 @@ function FallbackBlock({ endpoint, feedback, setFeedback }: {
       </p>
       {fallback || adding ? (
         <EndpointForm
-          endpoint={fallback ?? blank}
+          purpose={purpose}
+          slot="fallback"
+          endpoint={fallback}
           feedback={feedback}
           setFeedback={setFeedback}
           onCancel={fallback ? undefined : () => setAdding(false)}
@@ -146,8 +152,11 @@ function FallbackBlock({ endpoint, feedback, setFeedback }: {
   )
 }
 
-function EndpointForm({ endpoint, feedback, setFeedback, onCancel }: {
-  endpoint: AiEndpointSlotStatus
+function EndpointForm({ purpose, slot, endpoint, feedback, setFeedback, onCancel }: {
+  purpose: AiPurpose
+  slot: AiSlot
+  /** The stored endpoint, or null for an empty form. */
+  endpoint: AiEndpointSlotStatus | null
   feedback: Feedback
   setFeedback: (feedback: Feedback) => void
   /** Only for a fallback that is not stored yet: hides the empty form again. */
@@ -155,17 +164,14 @@ function EndpointForm({ endpoint, feedback, setFeedback, onCancel }: {
 }) {
   const t = useTranslations('admin.aiEndpoints')
   const router = useRouter()
-  const [form, setForm] = useState({ name: endpoint.name, baseUrl: endpoint.baseUrl, model: endpoint.model, apiKey: '' })
+  const [form, setForm] = useState({ name: endpoint?.name ?? '', baseUrl: endpoint?.baseUrl ?? '', model: endpoint?.model ?? '', apiKey: '' })
   const [clearApiKey, setClearApiKey] = useState(false)
-  const [busy, setBusy] = useState<'save' | 'test' | 'reset' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'test' | 'delete' | null>(null)
   const [invalid, setInvalid] = useState<string[]>([])
 
-  const { purpose, slot } = endpoint
   const isFallback = slot === 'fallback'
-  const storedKey = endpoint.source === 'database' && endpoint.hasApiKey
-  const apiKeyPlaceholder = storedKey
-    ? t('apiKeyStored', { hint: endpoint.apiKeyHint ?? '…' })
-    : endpoint.source === 'env' && !isFallback ? t('apiKeyEnv') : t('apiKeyNone')
+  const storedKey = Boolean(endpoint?.hasApiKey)
+  const apiKeyPlaceholder = storedKey ? t('apiKeyStored', { hint: endpoint?.apiKeyHint ?? '…' }) : t('apiKeyNone')
   const purposeLabel = t(`purpose_${purpose}`)
 
   function errorText(result: ApiResult) {
@@ -177,14 +183,14 @@ function EndpointForm({ endpoint, feedback, setFeedback, onCancel }: {
     return t('error_unknown')
   }
 
-  async function call(kind: 'save' | 'test' | 'reset') {
+  async function call(kind: 'save' | 'test' | 'delete') {
     setBusy(kind)
     setFeedback(null)
     setInvalid([])
     try {
       const body = JSON.stringify({ purpose, slot, ...form, clearApiKey })
       const res =
-        kind === 'reset'
+        kind === 'delete'
           ? await fetch(`/api/admin/ai-endpoints?purpose=${purpose}&slot=${slot}`, { method: 'DELETE' })
           : await fetch(kind === 'save' ? '/api/admin/ai-endpoints' : '/api/admin/ai-endpoints/test', {
               method: kind === 'save' ? 'PUT' : 'POST',
@@ -206,7 +212,7 @@ function EndpointForm({ endpoint, feedback, setFeedback, onCancel }: {
         setFeedback({ kind: result.modelFound === false ? 'error' : 'success', text: `${t('testOk', { status: result.status ?? '' })} ${model}` })
         return
       }
-      const done = kind === 'save' ? t('saved') : isFallback ? t('fallbackRemoved') : t('resetDone')
+      const done = kind === 'save' ? t('saved') : isFallback ? t('fallbackRemoved') : t('deleted')
       setFeedback({ kind: 'success', text: done })
       setForm((current) => ({ ...current, apiKey: '' }))
       router.refresh()
@@ -263,18 +269,18 @@ function EndpointForm({ endpoint, feedback, setFeedback, onCancel }: {
         <Button type="button" variant="outline" disabled={busy !== null} onClick={() => call('test')}>
           {busy === 'test' ? t('testing') : t('test')}
         </Button>
-        {endpoint.source === 'database' && (
+        {endpoint && (
           <Button
             type="button"
             variant="outline"
             className="text-red-700 border-red-300 hover:bg-red-50 hover:text-red-800"
             disabled={busy !== null}
             onClick={() => {
-              const question = isFallback ? t('fallbackRemoveConfirm', { purpose: purposeLabel }) : t('resetConfirm', { purpose: purposeLabel })
-              if (confirm(question)) call('reset')
+              const question = isFallback ? t('fallbackRemoveConfirm', { purpose: purposeLabel }) : t('deleteConfirm', { purpose: purposeLabel })
+              if (confirm(question)) call('delete')
             }}
           >
-            {isFallback ? t('fallbackRemove') : t('reset')}
+            {isFallback ? t('fallbackRemove') : t('delete')}
           </Button>
         )}
         {onCancel && (

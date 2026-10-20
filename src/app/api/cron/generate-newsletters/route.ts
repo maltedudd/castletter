@@ -3,7 +3,7 @@ import OpenAI from 'openai'
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
-import { resolveAiEndpoints, toClientOptions } from '@/lib/ai/endpoints.mjs'
+import { requireAiEndpoint, resolveAiEndpoints, toClientOptions } from '@/lib/ai/endpoints.mjs'
 import { generateNewsletterForEpisode, getPodcastRef } from '@/lib/newsletter/generate.mjs'
 import { deliverImmediatelyIfWanted } from '@/lib/newsletter/delivery.mjs'
 import { createResendMailer } from '@/lib/newsletter/send'
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
   let sentImmediately = 0
 
   try {
-    const { text_generation: textEndpoint } = await resolveAiEndpoints({ supabase })
+    const textEndpoint = requireAiEndpoint(await resolveAiEndpoints({ supabase }), 'text_generation')
     const openrouter = new OpenAI(toClientOptions(textEndpoint))
 
     // Fetch recent transcribed episodes only. This prevents any stale backlog

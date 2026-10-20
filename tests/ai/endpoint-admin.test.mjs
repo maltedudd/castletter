@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomBytes } from 'node:crypto'
 import { decryptApiKey, encryptApiKey } from '../../src/lib/ai/endpoints.mjs'
-import { listEndpointStatus, resetEndpoint, saveEndpoint, testEndpointConnection } from '../../src/lib/ai/endpoint-admin.mjs'
+import { deleteEndpoint, listEndpointStatus, saveEndpoint, testEndpointConnection } from '../../src/lib/ai/endpoint-admin.mjs'
 import { makeFakeSupabase } from '../helpers/fake-supabase.mjs'
 
 const MASTER = randomBytes(32).toString('base64')
-const ENV = { OPENROUTER_API_KEY: 'sk-or-env-key', AI_ENDPOINTS_ENCRYPTION_KEY: MASTER }
+const ENV = { OPENROUTER_API_KEY: 'sk-or-env-key', AI_ENDPOINTS_ENCRYPTION_KEY: MASTER }  // OPENROUTER_* must be ignored (NIAS-63)
 const INPUT = { purpose: 'transcription', name: 'Parakeet', baseUrl: 'http://ki:8000/v1/', model: 'parakeet-v3', apiKey: 'sk-local-abcdef12' }
 
 function storedTranscription(overrides = {}) {
@@ -28,35 +28,39 @@ function fakeFetch(handler) {
 
 const jsonResponse = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body })
 
-test('Status: Standard aus Env bzw. gespeicherter Endpunkt, ohne Chiffrat oder Key', async () => {
+test('Status: gespeicherter Endpunkt bzw. nicht eingerichtet, ohne Chiffrat oder Key', async () => {
   const supabase = makeFakeSupabase({ ai_endpoints: [storedTranscription()] })
-  const { endpoints, error } = await listEndpointStatus(supabase, ENV)
+  const { endpoints, error } = await listEndpointStatus(supabase)
   assert.equal(error, null)
   assert.deepEqual(endpoints, [
-    { purpose: 'transcription', slot: 'primary', source: 'database', name: 'Parakeet', baseUrl: 'http://ki:8000/v1', model: 'parakeet-v3', hasApiKey: true, apiKeyHint: '…ef12', updatedAt: '2026-10-20T18:00:00Z', fallback: null },
-    { purpose: 'text_generation', slot: 'primary', source: 'env', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'google/gemini-2.5-flash', hasApiKey: true, apiKeyHint: null, updatedAt: null, fallback: null },
+    {
+      purpose: 'transcription',
+      primary: { purpose: 'transcription', slot: 'primary', name: 'Parakeet', baseUrl: 'http://ki:8000/v1', model: 'parakeet-v3', hasApiKey: true, apiKeyHint: '…ef12', updatedAt: '2026-10-20T18:00:00Z' },
+      fallback: null,
+    },
+    { purpose: 'text_generation', primary: null, fallback: null },
   ])
   const serialized = JSON.stringify(endpoints)
   assert.ok(!serialized.includes('v1:') && !serialized.includes('sk-'))
 })
 
-test('Status: Fallback je Zweck, auch hinter dem Env-Standard', async () => {
+test('Status: Fallback je Zweck', async () => {
   const supabase = makeFakeSupabase({ ai_endpoints: [
+    storedTranscription({ purpose: 'text_generation' }),
     storedTranscription({ purpose: 'text_generation', slot: 'fallback', name: 'Qwen', model: 'qwen', api_key_encrypted: null, api_key_hint: null }),
   ] })
-  const { endpoints } = await listEndpointStatus(supabase, ENV)
+  const { endpoints } = await listEndpointStatus(supabase)
   assert.equal(endpoints[0].fallback, null)
-  assert.equal(endpoints[1].source, 'env')
   assert.deepEqual(endpoints[1].fallback, {
-    purpose: 'text_generation', slot: 'fallback', source: 'database', name: 'Qwen', baseUrl: 'http://ki:8000/v1', model: 'qwen', hasApiKey: false, apiKeyHint: null, updatedAt: '2026-10-20T18:00:00Z',
+    purpose: 'text_generation', slot: 'fallback', name: 'Qwen', baseUrl: 'http://ki:8000/v1', model: 'qwen', hasApiKey: false, apiKeyHint: null, updatedAt: '2026-10-20T18:00:00Z',
   })
 })
 
-test('Status bei Lesefehler: Standardwerte plus Fehler', async () => {
+test('Status bei Lesefehler: nicht eingerichtet plus Fehler', async () => {
   const supabase = { from: () => ({ select: async () => ({ data: null, error: { message: 'down' } }) }) }
-  const { endpoints, error } = await listEndpointStatus(supabase, {})
+  const { endpoints, error } = await listEndpointStatus(supabase)
   assert.equal(error, 'down')
-  assert.deepEqual(endpoints.map((e) => [e.source, e.hasApiKey]), [['env', false], ['env', false]])
+  assert.deepEqual(endpoints.map((e) => [e.primary, e.fallback]), [[null, null], [null, null]])
 })
 
 test('Speichern: neuer Endpunkt mit verschlüsseltem Key und Hint', async () => {
@@ -87,10 +91,11 @@ test('Speichern: Fallback als eigene Zeile mit eigenem, slotgebundenem Key', asy
   assert.deepEqual(supabase.data.ai_endpoints.map((r) => [r.slot, r.model]), [['primary', 'parakeet-v3'], ['fallback', 'neu']])
 })
 
-test('Speichern: neuer OpenRouter-Fallback braucht einen eigenen Key, auch wenn der Primäre einen hat', async () => {
-  const supabase = makeFakeSupabase({ ai_endpoints: [storedTranscription({ base_url: 'https://openrouter.ai/api/v1' })] })
-  const fallback = { ...INPUT, slot: 'fallback', baseUrl: 'https://openrouter.ai/api/v1', apiKey: '' }
-  assert.deepEqual(await saveEndpoint(supabase, fallback, ENV), { ok: false, status: 400, code: 'invalid', fields: ['apiKey'] })
+test('Speichern: Fallback nur mit gespeichertem Endpunkt; unbekannter Slot', async () => {
+  const supabase = makeFakeSupabase({ ai_endpoints: [] })
+  const fallback = { ...INPUT, slot: 'fallback' }
+  assert.deepEqual(await saveEndpoint(supabase, fallback, ENV), { ok: false, status: 400, code: 'primaryMissing' })
+  assert.equal(supabase.data.ai_endpoints.length, 0)
   assert.deepEqual(await saveEndpoint(supabase, { ...fallback, slot: 'dritter' }, ENV), { ok: false, status: 400, code: 'invalid', fields: ['slot'] })
 })
 
@@ -122,28 +127,27 @@ test('Speichern: Validierungsfehler als Feldliste, DB-Fehler als Code', async ()
   assert.deepEqual(await saveEndpoint(broken, INPUT, ENV), { ok: false, status: 500, code: 'saveFailed' })
 })
 
-test('Speichern: neuer OpenRouter-Eintrag ohne Key wird abgelehnt, bestehender behält seinen', async () => {
+test('Speichern: ein neuer Eintrag ohne Key wird ohne Key gespeichert, auch für OpenRouter', async () => {
   const openrouter = { purpose: 'text_generation', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'x/y', apiKey: '' }
   const empty = makeFakeSupabase({ ai_endpoints: [] })
-  assert.deepEqual(await saveEndpoint(empty, openrouter, ENV), { ok: false, status: 400, code: 'invalid', fields: ['apiKey'] })
-  assert.equal(empty.data.ai_endpoints.length, 0)
-  assert.deepEqual(await saveEndpoint(empty, { ...openrouter, apiKey: 'sk-or-neu-12345' }, ENV), { ok: true })
-  assert.deepEqual(await saveEndpoint(empty, { ...openrouter, model: 'x/z' }, ENV), { ok: true })
-  assert.equal(empty.data.ai_endpoints[0].api_key_hint, '…2345')
+  assert.deepEqual(await saveEndpoint(empty, openrouter, ENV), { ok: true })
+  assert.equal(empty.data.ai_endpoints[0].api_key_encrypted, undefined)
+  assert.ok(!JSON.stringify(empty.data).includes('sk-or-env-key'))
 })
 
-test('Zurücksetzen löscht nur den einen Zweck und Slot', async () => {
+test('Löschen: Endpunkt löscht den Fallback mit, Fallback allein lässt den Endpunkt', async () => {
   const supabase = makeFakeSupabase({ ai_endpoints: [
     storedTranscription(),
     storedTranscription({ slot: 'fallback' }),
     storedTranscription({ purpose: 'text_generation', api_key_encrypted: null }),
+    storedTranscription({ purpose: 'text_generation', slot: 'fallback', api_key_encrypted: null }),
   ] })
-  assert.deepEqual(await resetEndpoint(supabase, 'transcription'), { ok: true })
-  assert.deepEqual(supabase.data.ai_endpoints.map((r) => [r.purpose, r.slot]), [['transcription', 'fallback'], ['text_generation', 'primary']])
-  assert.deepEqual(await resetEndpoint(supabase, 'transcription', 'fallback'), { ok: true })
+  assert.deepEqual(await deleteEndpoint(supabase, 'text_generation', 'fallback'), { ok: true })
+  assert.deepEqual(supabase.data.ai_endpoints.map((r) => [r.purpose, r.slot]), [['transcription', 'primary'], ['transcription', 'fallback'], ['text_generation', 'primary']])
+  assert.deepEqual(await deleteEndpoint(supabase, 'transcription'), { ok: true })
   assert.deepEqual(supabase.data.ai_endpoints.map((r) => [r.purpose, r.slot]), [['text_generation', 'primary']])
-  assert.deepEqual(await resetEndpoint(supabase, 'chat'), { ok: false, status: 400, code: 'invalid', fields: ['purpose'] })
-  assert.deepEqual(await resetEndpoint(supabase, 'transcription', 'dritter'), { ok: false, status: 400, code: 'invalid', fields: ['slot'] })
+  assert.deepEqual(await deleteEndpoint(supabase, 'chat'), { ok: false, status: 400, code: 'invalid', fields: ['purpose'] })
+  assert.deepEqual(await deleteEndpoint(supabase, 'transcription', 'dritter'), { ok: false, status: 400, code: 'invalid', fields: ['slot'] })
 })
 
 test('Verbindungstest: ok, Modell gefunden oder nicht, Bearer nur mit Key, keine Redirects', async () => {
@@ -215,15 +219,11 @@ test('Verbindungstest Fallback: nur der eigene gespeicherte Key, nie der primär
   assert.deepEqual(openrouter.calls[0].init.headers, {})
 })
 
-test('Verbindungstest ohne gespeicherten Endpunkt: Env-Key nur für die OpenRouter-URL', async () => {
+test('Verbindungstest ohne gespeicherten Endpunkt: nie ein Key aus der Env', async () => {
   const supabase = makeFakeSupabase({ ai_endpoints: [] })
   const openrouter = fakeFetch(() => jsonResponse(200, { data: [] }))
   await testEndpointConnection(supabase, { purpose: 'text_generation', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', model: 'm' }, { env: ENV, fetchImpl: openrouter.impl })
-  assert.equal(openrouter.calls[0].init.headers.Authorization, 'Bearer sk-or-env-key')
-
-  const elsewhere = fakeFetch(() => jsonResponse(200, { data: [] }))
-  await testEndpointConnection(supabase, { purpose: 'text_generation', name: 'X', baseUrl: 'http://ki:8080/v1', model: 'm' }, { env: ENV, fetchImpl: elsewhere.impl })
-  assert.deepEqual(elsewhere.calls[0].init.headers, {})
+  assert.deepEqual(openrouter.calls[0].init.headers, {})
 })
 
 test('Verbindungstest validiert die Eingabe vor jedem Request', async () => {

@@ -2,9 +2,10 @@
 // pipeline pass and rebuilds a client only when its endpoint changed, so endpoints edited in
 // the admin area apply without a restart. Within one pass (e.g. all chunks of an episode)
 // the endpoint stays the same. A stored fallback endpoint (NIAS-62) is tried per request when
-// the primary one fails.
+// the primary one fails. A purpose without an endpoint (NIAS-63: no default from the
+// environment) logs `ai_endpoint_missing`, and its work fails until one is entered.
 
-import { AI_PURPOSES, describeAiEndpoint, toClientOptions } from '../src/lib/ai/endpoints.mjs'
+import { AI_PURPOSES, describeAiEndpoint, requireAiEndpoint, toClientOptions } from '../src/lib/ai/endpoints.mjs'
 import { createFallbackChatClient, withFallback } from '../src/lib/ai/fallback.mjs'
 import { withNewsletterModel } from '../src/lib/cron/newsletter-request.mjs'
 import { createOpenRouterChunkTranscriber } from '../src/lib/transcription/audio-transcriber.mjs'
@@ -24,6 +25,11 @@ export function createAiClients({ getEndpoints, createClient, log = () => {} }) 
   async function refresh() {
     const endpoints = await getEndpoints()
     for (const purpose of AI_PURPOSES) {
+      if (!endpoints[purpose]) {
+        if (current[purpose] !== null) log('warn', 'ai_endpoint_missing', { purpose })
+        current[purpose] = null
+        continue
+      }
       const { fallback, ...endpoint } = endpoints[purpose]
       const signature = JSON.stringify([endpoint, fallback ?? null].map((e) => e && [e.baseURL, e.apiKey, e.model]))
       if (current[purpose]?.signature === signature) continue
@@ -32,8 +38,8 @@ export function createAiClients({ getEndpoints, createClient, log = () => {} }) 
   }
 
   function get(purpose) {
-    if (!current[purpose]) throw new Error(`KI-Endpunkt für ${purpose} ist noch nicht geladen`)
-    return current[purpose]
+    if (current[purpose] === undefined) throw new Error(`KI-Endpunkt für ${purpose} ist noch nicht geladen`)
+    return requireAiEndpoint(current, purpose)
   }
 
   return {
