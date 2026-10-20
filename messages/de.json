@@ -384,7 +384,7 @@
   "admin": {
     "aiEndpoints": {
       "title": "KI-Endpunkte",
-      "description": "Ein OpenAI-kompatibler Endpunkt je Zweck. Ohne eigenen Endpunkt gilt OpenRouter aus der Umgebung. Änderungen greifen im Worker spätestens nach einer Minute.",
+      "description": "Ein OpenAI-kompatibler Endpunkt je Zweck, optional mit Fallback. Ohne eigenen Endpunkt gilt OpenRouter aus der Umgebung. Änderungen greifen im Worker spätestens nach einer Minute.",
       "purpose_transcription": "Transkription",
       "purpose_text_generation": "Textgenerierung",
       "purposeHint_transcription": "Audio → Text (Podcasts, YouTube ohne Untertitel)",
@@ -431,7 +431,16 @@
       "error_unreachable": "Server nicht erreichbar: {detail}",
       "error_storedKeyUnreadable": "Der gespeicherte Key lässt sich nicht entschlüsseln (AI_ENDPOINTS_ENCRYPTION_KEY geändert?). Bitte neu eingeben.",
       "error_testFailed": "Test fehlgeschlagen.",
-      "error_unknown": "Unerwarteter Fehler."
+      "error_unknown": "Unerwarteter Fehler.",
+      "fallbackTitle": "Fallback (optional)",
+      "fallbackHint": "Springt automatisch ein, wenn der Endpunkt oben einen Fehler liefert (nicht erreichbar, HTTP-Fehler, Modell nicht gefunden, leere Antwort). Ohne Eintrag wird wie bisher später erneut versucht.",
+      "fallbackActive": "Fallback aktiv",
+      "fallbackAdd": "Fallback hinzufügen",
+      "fallbackRemove": "Fallback entfernen",
+      "fallbackRemoveConfirm": "Fallback für „{purpose}“ löschen? Danach gibt es bei Fehlern keinen Ersatz mehr.",
+      "fallbackRemoved": "Fallback entfernt.",
+      "cancel": "Abbrechen",
+      "error_field_slot": "Unbekannter Slot."
     }
   }
 }

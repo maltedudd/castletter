@@ -10,3 +10,9 @@ export function buildNewsletterCompletionOptions(model, messages) {
     messages,
   }
 }
+
+/** The same request for another model (NIAS-62 fallback), with that model's own options. */
+export function withNewsletterModel(options, model) {
+  const { model: _model, reasoning: _reasoning, messages, ...rest } = options
+  return { ...rest, ...buildNewsletterCompletionOptions(model, messages) }
+}

@@ -384,7 +384,7 @@
   "admin": {
     "aiEndpoints": {
       "title": "AI endpoints",
-      "description": "One OpenAI-compatible endpoint per purpose. Without a custom endpoint, OpenRouter from the environment is used. Changes reach the worker within a minute.",
+      "description": "One OpenAI-compatible endpoint per purpose, optionally with a fallback. Without a custom endpoint, OpenRouter from the environment is used. Changes reach the worker within a minute.",
       "purpose_transcription": "Transcription",
       "purpose_text_generation": "Text generation",
       "purposeHint_transcription": "Audio → text (podcasts, YouTube without captions)",
@@ -431,7 +431,16 @@
       "error_unreachable": "Server unreachable: {detail}",
       "error_storedKeyUnreadable": "The stored key cannot be decrypted (AI_ENDPOINTS_ENCRYPTION_KEY changed?). Please enter it again.",
       "error_testFailed": "Test failed.",
-      "error_unknown": "Unexpected error."
+      "error_unknown": "Unexpected error.",
+      "fallbackTitle": "Fallback (optional)",
+      "fallbackHint": "Takes over automatically when the endpoint above fails (unreachable, HTTP error, model not found, empty answer). Without one, the work is retried later as before.",
+      "fallbackActive": "Fallback active",
+      "fallbackAdd": "Add fallback",
+      "fallbackRemove": "Remove fallback",
+      "fallbackRemoveConfirm": "Delete the fallback for “{purpose}”? Failures will then have no replacement.",
+      "fallbackRemoved": "Fallback removed.",
+      "cancel": "Cancel",
+      "error_field_slot": "Unknown slot."
     }
   }
 }

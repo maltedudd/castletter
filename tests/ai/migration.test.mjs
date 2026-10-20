@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { AI_PURPOSES, LIMITS, apiKeyHint, encryptApiKey } from '../../src/lib/ai/endpoints.mjs'
+import { AI_PURPOSES, AI_SLOTS, LIMITS, apiKeyHint, encryptApiKey } from '../../src/lib/ai/endpoints.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const sql = readFileSync(path.join(ROOT, 'supabase/migrations/20261020_create_ai_endpoints.sql'), 'utf8')
@@ -31,4 +31,16 @@ test('nur die Service-Role darf die Tabelle lesen oder schreiben', () => {
   assert.match(normalized, /REVOKE ALL ON ai_endpoints FROM anon, authenticated/)
   assert.doesNotMatch(normalized, /CREATE POLICY/)
   assert.doesNotMatch(normalized, /GRANT /)
+})
+
+// NIAS-62: fallback slot.
+const fallbackSql = readFileSync(path.join(ROOT, 'supabase/migrations/20261021_add_ai_endpoint_fallback.sql'), 'utf8')
+  .replace(/--.*$/gm, '').replace(/\s+/g, ' ')
+
+test('Fallback-Migration: Slot je Zweck, bestehende Zeilen werden primary, idempotent', () => {
+  assert.match(fallbackSql, /ADD COLUMN IF NOT EXISTS slot TEXT NOT NULL DEFAULT 'primary'/)
+  assert.match(fallbackSql, new RegExp(`CHECK \\(slot IN \\(${AI_SLOTS.map((s) => `'${s}'`).join(', ')}\\)\\)`))
+  assert.match(fallbackSql, /DROP CONSTRAINT IF EXISTS ai_endpoints_pkey; ALTER TABLE ai_endpoints ADD CONSTRAINT ai_endpoints_pkey PRIMARY KEY \(purpose, slot\)/)
+  assert.match(fallbackSql, /DROP CONSTRAINT IF EXISTS ai_endpoints_slot_check; ALTER TABLE ai_endpoints ADD CONSTRAINT ai_endpoints_slot_check/)
+  assert.doesNotMatch(fallbackSql, /GRANT |CREATE POLICY|DISABLE ROW LEVEL SECURITY|UPDATE ai_endpoints|DELETE FROM/)
 })

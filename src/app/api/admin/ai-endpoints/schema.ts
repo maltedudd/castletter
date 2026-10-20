@@ -3,6 +3,7 @@ import { z } from 'zod'
 // Shape only; content rules (URL, lengths) are checked by validateEndpointInput.
 export const EndpointBodySchema = z.object({
   purpose: z.string(),
+  slot: z.string().optional(),
   name: z.string(),
   baseUrl: z.string(),
   model: z.string(),

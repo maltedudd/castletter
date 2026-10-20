@@ -260,6 +260,14 @@ Migration fehlt, läuft der Worker ebenso mit diesen Env-Werten weiter.
   Wert führt zu `iteration_failed` (Stage `ai_endpoints`) ohne Key-Werte im Log.
 - Lokale Endpunkte (z. B. Parakeet auf der ki-maschine) müssen von der Docker-VM aus
   erreichbar sein; die Vercel-Cron-Routen erreichen nur öffentliche Endpunkte.
+- **Fallback (NIAS-62):** Je Zweck lässt sich optional ein zweiter Endpunkt eintragen
+  (Zeile mit `slot = 'fallback'`, `supabase/migrations/20261021_add_ai_endpoint_fallback.sql`).
+  Liefert der primäre Endpunkt einen Fehler – egal welchen – oder bei der Textgenerierung eine
+  leere Antwort, wiederholt der Worker dieselbe Anfrage einmal gegen den Fallback und loggt
+  `ai_endpoint_fallback` (Zweck, von/nach, Fehler – nie den Key). Scheitert auch der Fallback,
+  gilt der Fehler wie bisher (Retry später). Ohne Fallback ändert sich nichts. Der Fallback
+  kann auch hinter dem Env-Standard stehen. Die Vercel-Cron-Routen nutzen nur den primären
+  Endpunkt.
 
 ## Voraussetzungen
 

@@ -16,7 +16,7 @@ test('Fehlercodes, Felder und Zwecke sind in DE und EN übersetzt', () => {
   // Every quoted word in a `code:`/`error:` expression, ternaries included.
   const codes = [...new Set([...sources.matchAll(/\b(?:code|error): ([^,}\n]+)/g)].flatMap((m) => [...m[1].matchAll(/'(\w+)'/g)].map((q) => q[1])))]
   assert.ok(codes.length >= 10, `zu wenige Codes: ${codes}`)
-  const fields = ['purpose', 'name', 'baseUrl', 'model', 'apiKey']
+  const fields = ['purpose', 'slot', 'name', 'baseUrl', 'model', 'apiKey']
   const ui = read('src/app/admin/AiEndpointsSection.tsx')
   const uiKeys = [...new Set([...ui.matchAll(/\bt\('(\w+)'/g)].map((m) => m[1]))]
 

@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createAiClients } from '../../worker/ai-clients.mjs'
 
 function endpoint(purpose, overrides = {}) {
-  return { purpose, source: 'env', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'or-key', model: `${purpose}-model`, ...overrides }
+  return { purpose, slot: 'primary', source: 'env', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'or-key', model: `${purpose}-model`, ...overrides }
 }
 
 function setup(initial) {
@@ -15,7 +15,16 @@ function setup(initial) {
     createClient: (options) => {
       const client = {
         options,
-        audio: { transcriptions: { create: async ({ model }) => ({ text: `${options.baseURL}|${model}` }) } },
+        calls: [],
+        audio: { transcriptions: { create: async ({ model }) => {
+          if (options.baseURL.includes('down')) throw Object.assign(new Error(`${options.baseURL} down`), { status: 503 })
+          return { text: `${options.baseURL}|${model}` }
+        } } },
+        chat: { completions: { create: async (request) => {
+          client.calls.push(request)
+          if (options.baseURL.includes('down')) throw new Error('ECONNREFUSED')
+          return { choices: [{ message: { content: `${options.baseURL}|${request.model}` } }] }
+        } } },
       }
       created.push(client)
       return client
@@ -44,7 +53,7 @@ test('baut je Zweck einen Client und nutzt ihn für Transkription und Text', asy
   ])
   assert.equal(await ai.transcribeChunk(Buffer.from('audio'), { contentType: 'audio/mpeg', ext: 'mp3', basename: 'episode' }), 'http://ki:8000/v1|transcription-model')
   assert.deepEqual(ai.textGeneration(), { client: created[1], model: 'text_generation-model' })
-  assert.deepEqual(logs[0], ['info', 'ai_endpoint_active', { purpose: 'transcription', source: 'database', name: 'Parakeet', model: 'transcription-model', host: 'ki:8000' }])
+  assert.deepEqual(logs[0], ['info', 'ai_endpoint_active', { purpose: 'transcription', slot: 'primary', source: 'database', name: 'Parakeet', model: 'transcription-model', host: 'ki:8000' }])
   assert.ok(!JSON.stringify(logs).includes('sk-p') && !JSON.stringify(logs).includes('or-key'))
 })
 
@@ -81,4 +90,51 @@ test('fehlgeschlagener refresh lässt die bisherigen Clients aktiv', async () =>
   fail = true
   await assert.rejects(ai.refresh(), /db down/)
   assert.equal(ai.textGeneration().model, 'text_generation-model')
+})
+
+test('Transkription: Fehler des Primären → Fallback, ohne Fallback der Fehler', async () => {
+  const fallback = endpoint('transcription', { slot: 'fallback', source: 'database', name: 'Whisper', model: 'whisper', apiKey: 'sk-f' })
+  const { ai, created, logs, setEndpoints } = setup({
+    transcription: { ...endpoint('transcription', { source: 'database', name: 'Parakeet', baseURL: 'http://down:8091/v1' }), fallback },
+    text_generation: endpoint('text_generation'),
+  })
+  await ai.refresh()
+  assert.deepEqual(created.map((c) => c.options.baseURL), ['http://down:8091/v1', 'https://openrouter.ai/api/v1', 'https://openrouter.ai/api/v1'])
+  assert.deepEqual(logs.map(([, msg, info]) => [msg, info.purpose, info.slot]), [
+    ['ai_endpoint_active', 'transcription', 'primary'],
+    ['ai_endpoint_active', 'transcription', 'fallback'],
+    ['ai_endpoint_active', 'text_generation', 'primary'],
+  ])
+
+  const format = { contentType: 'audio/mpeg', ext: 'mp3', basename: 'episode' }
+  assert.equal(await ai.transcribeChunk(Buffer.from('audio'), format), 'https://openrouter.ai/api/v1|whisper')
+  assert.equal(logs.at(-1)[1], 'ai_endpoint_fallback')
+  assert.ok(!JSON.stringify(logs).includes('sk-f'))
+
+  // Fallback removed in the admin area: rebuilt, the error surfaces again.
+  setEndpoints({
+    transcription: { ...endpoint('transcription', { source: 'database', name: 'Parakeet', baseURL: 'http://down:8091/v1' }), fallback: null },
+    text_generation: endpoint('text_generation'),
+  })
+  await ai.refresh()
+  await assert.rejects(ai.transcribeChunk(Buffer.from('audio'), format), /down:8091\/v1 down/)
+})
+
+test('Text: Fallback mit eigenem Modell und Gemini-Optionen nur für Gemini', async () => {
+  const { ai, created } = setup({
+    transcription: endpoint('transcription'),
+    text_generation: {
+      ...endpoint('text_generation', { baseURL: 'http://down:8080/v1', model: 'qwen' }),
+      fallback: endpoint('text_generation', { slot: 'fallback', model: 'google/gemini-2.5-flash' }),
+    },
+  })
+  await ai.refresh()
+  const { client, model } = ai.textGeneration()
+  assert.equal(model, 'qwen')
+  const completion = await client.chat.completions.create({ model, max_tokens: 3000, temperature: 0.7, messages: [] })
+  assert.equal(completion.choices[0].message.content, 'https://openrouter.ai/api/v1|google/gemini-2.5-flash')
+  const [down, fallback] = [created[1], created[2]]
+  assert.equal(down.calls[0].model, 'qwen')
+  assert.equal('reasoning' in down.calls[0], false)
+  assert.deepEqual(fallback.calls[0].reasoning, { effort: 'none' })
 })
