@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
-import { getOpenRouterConfig } from '@/lib/cron/openrouter-config.mjs'
+import { resolveAiEndpoints, toClientOptions } from '@/lib/ai/endpoints.mjs'
 import {
   buildAcceptedResponse,
   buildNoPendingResponse,
@@ -140,9 +140,9 @@ export async function GET(request: NextRequest) {
     // download + Whisper + DB update continues below via after() within the function's
     // remaining maxDuration budget, well past when this response has already been sent.
     after(async () => {
-      const openrouterConfig = getOpenRouterConfig()
-      const openrouter = new OpenAI(openrouterConfig.client)
-      await transcribeEpisode(supabase, openrouter, openrouterConfig.transcriptionModel, episode)
+      const { transcription } = await resolveAiEndpoints({ supabase })
+      const openrouter = new OpenAI(toClientOptions(transcription))
+      await transcribeEpisode(supabase, openrouter, transcription.model, episode)
     })
 
     return NextResponse.json(buildAcceptedResponse(episode.id, staleReset), { status: 202 })

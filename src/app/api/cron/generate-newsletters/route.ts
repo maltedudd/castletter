@@ -3,7 +3,7 @@ import OpenAI from 'openai'
 import { Resend } from 'resend'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getRecentEpisodeCutoff } from '@/lib/cron/recent-episodes.mjs'
-import { getOpenRouterConfig } from '@/lib/cron/openrouter-config.mjs'
+import { resolveAiEndpoints, toClientOptions } from '@/lib/ai/endpoints.mjs'
 import { generateNewsletterForEpisode, getPodcastRef } from '@/lib/newsletter/generate.mjs'
 import { deliverImmediatelyIfWanted } from '@/lib/newsletter/delivery.mjs'
 import { createResendMailer } from '@/lib/newsletter/send'
@@ -25,8 +25,6 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = createAdminClient()
-  const openrouterConfig = getOpenRouterConfig()
-  const openrouter = new OpenAI(openrouterConfig.client)
   const sendEmail = createResendMailer(new Resend(process.env.RESEND_API_KEY))
 
   let generated = 0
@@ -34,6 +32,9 @@ export async function GET(request: NextRequest) {
   let sentImmediately = 0
 
   try {
+    const { text_generation: textEndpoint } = await resolveAiEndpoints({ supabase })
+    const openrouter = new OpenAI(toClientOptions(textEndpoint))
+
     // Fetch recent transcribed episodes only. This prevents any stale backlog
     // item from turning into a delayed newsletter when cron processing resumes.
     const { data: episodes, error: fetchError } = await supabase
@@ -63,7 +64,7 @@ export async function GET(request: NextRequest) {
       const outcome = await generateNewsletterForEpisode({
         supabase,
         openrouter,
-        model: openrouterConfig.newsletterModel,
+        model: textEndpoint.model,
         episode,
       })
       if (outcome !== 'ready') {

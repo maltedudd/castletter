@@ -14,10 +14,11 @@ import { loadWorkerConfig } from './config.mjs'
 import { runOnce, releaseClaim } from './worker-core.mjs'
 import { runGenerationOnce, runSendSweep, createHourlyGate } from './newsletter-jobs.mjs'
 import { runFeedCheck, createIntervalGate } from './feed-jobs.mjs'
+import { createAiClients } from './ai-clients.mjs'
+import { createAiEndpointResolver } from '../src/lib/ai/endpoints.mjs'
 import { generateEmailHTML, generateEmailPlainText } from '../src/lib/email/template.mjs'
 import { createDigestOverviewGenerator } from '../src/lib/newsletter/digest.mjs'
 import { MASTODON_RSS_CUSTOM_FIELDS } from '../src/lib/social/mastodon.mjs'
-import { createOpenRouterChunkTranscriber } from '../src/lib/transcription/audio-transcriber.mjs'
 import { createFfmpeg } from '../src/lib/transcription/audio-file.mjs'
 import { createYtDlpClient } from '../src/lib/youtube/yt-dlp.mjs'
 import { createEpisodeTranscriber } from './transcribers.mjs'
@@ -62,12 +63,16 @@ async function main() {
   const supabase = createClient(config.supabaseUrl, config.serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
-  const openrouter = new OpenAI(config.openrouter.client)
-  const transcribeChunk = createOpenRouterChunkTranscriber(openrouter, config.openrouter.transcriptionModel)
+  // Endpoint per purpose from the admin area (ai_endpoints), OpenRouter env as default.
+  const ai = createAiClients({
+    getEndpoints: createAiEndpointResolver({ supabase, log }),
+    createClient: (options) => new OpenAI(options),
+    log,
+  })
   const ytDlp = createYtDlpClient({ binary: config.youtube.ytDlpPath, timeoutMs: config.youtube.downloadTimeoutMs })
   const transcribeEpisode = createEpisodeTranscriber({
     config,
-    transcribeChunk,
+    transcribeChunk: (audioBuffer, format) => ai.transcribeChunk(audioBuffer, format),
     youtube: ytDlp,
     lookup,
     ffmpeg: createFfmpeg({ binary: config.ffmpegPath, timeoutMs: config.transcodeTimeoutMs }),
@@ -78,7 +83,7 @@ async function main() {
     config,
     now: () => new Date(),
     log,
-    openrouter,
+    textGeneration: () => ai.textGeneration(),
     // Reads the channel's Videos tab when YouTube's feed endpoint is down.
     youtubeFallback: ytDlp,
     parseXml: (() => {
@@ -89,7 +94,10 @@ async function main() {
     sendEmail: config.newsletters ? createMailer(config.newsletters) : null,
     // Integrated overview above the single summaries of a daily digest (Kanban #38).
     summarizeDigest: config.newsletters
-      ? createDigestOverviewGenerator({ openrouter, model: config.openrouter.newsletterModel })
+      ? (items, style, options) => {
+          const { client, model } = ai.textGeneration()
+          return createDigestOverviewGenerator({ openrouter: client, model })(items, style, options)
+        }
       : null,
     transcribeEpisodeAudio: (episode, onChunkTranscribed, onProgress) =>
       transcribeEpisode(
@@ -128,13 +136,11 @@ async function main() {
   process.on('SIGINT', () => shutdown('SIGINT'))
 
   log('info', 'worker_started', {
-    model: config.openrouter.transcriptionModel,
     pollIntervalSeconds: config.pollIntervalMs / 1000,
     maxEpisodeAgeDays: config.maxEpisodeAgeDays,
     maxAttempts: config.maxAttempts,
     feedCheckIntervalMinutes: config.feedCheckIntervalMs ? config.feedCheckIntervalMs / 60_000 : null,
     newsletters: Boolean(config.newsletters),
-    newsletterModel: config.newsletters ? config.openrouter.newsletterModel : undefined,
     downloadTimeoutSeconds: config.downloadTimeoutMs / 1000,
     transcodeTimeoutSeconds: config.transcodeTimeoutMs / 1000,
     youtubeDownloadTimeoutSeconds: config.youtube.downloadTimeoutMs / 1000,
@@ -156,6 +162,10 @@ async function main() {
         return null
       }
     }
+
+    // Logs ai_endpoint_active whenever an endpoint changes. A failed refresh keeps the last
+    // known endpoints; before the first successful one the AI stages fail as well.
+    await stage('ai_endpoints', () => ai.refresh())
 
     const feedCheckAt = deps.now()
     if (feedCheck?.isDue(feedCheckAt)) {

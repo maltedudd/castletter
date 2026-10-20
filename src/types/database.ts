@@ -95,6 +95,24 @@ export interface SourceCategory {
   updated_at: string
 }
 
+/** NIAS-58: what an AI endpoint is used for; one endpoint per purpose. */
+export type AiPurpose = 'transcription' | 'text_generation'
+
+/** NIAS-58: OpenAI-compatible endpoint per purpose (service role only). */
+export interface AiEndpoint {
+  purpose: AiPurpose
+  name: string
+  /** http(s) URL without trailing slash, e.g. `https://openrouter.ai/api/v1` */
+  base_url: string
+  model: string
+  /** `v1:<iv>:<tag>:<ciphertext>` (AES-256-GCM, AI_ENDPOINTS_ENCRYPTION_KEY); null = keyless */
+  api_key_encrypted: string | null
+  /** Last four characters for display, e.g. `…a1b2` */
+  api_key_hint: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface PodcastSubscriptionInsert {
   user_id: string
   source_type?: SourceType

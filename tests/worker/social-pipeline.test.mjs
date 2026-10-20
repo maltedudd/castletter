@@ -49,12 +49,12 @@ function setup({ newsletters = true, annaTargets = {} } = {}) {
   const parser = new Parser({ customFields: MASTODON_RSS_CUSTOM_FIELDS })
   const deps = {
     supabase: db,
-    config: { maxEpisodeAgeDays: 7, maxAttempts: 3, openrouter: { newsletterModel: 'test/model' } },
+    config: { maxEpisodeAgeDays: 7, maxAttempts: 3 },
     now: () => NOW,
     log: () => {},
     fetchImpl,
     parseXml: (xml) => parser.parseString(xml),
-    openrouter,
+    textGeneration: () => ({ client: openrouter, model: 'test/model' }),
     transcribeEpisodeAudio: fail('Transkription'),
     sendEmail: newsletters ? async (mail) => { mails.push(mail) } : null,
     summarizeDigest: createDigestOverviewGenerator({ openrouter, model: 'test/model' }),

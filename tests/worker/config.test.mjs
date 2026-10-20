@@ -52,6 +52,15 @@ test('names missing secrets without echoing any values', () => {
   )
 })
 
+test('validates AI_ENDPOINTS_ENCRYPTION_KEY only when set, without echoing it', () => {
+  assert.doesNotThrow(() => loadWorkerConfig(REQUIRED))
+  assert.doesNotThrow(() => loadWorkerConfig({ ...REQUIRED, AI_ENDPOINTS_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64') }))
+  assert.throws(
+    () => loadWorkerConfig({ ...REQUIRED, AI_ENDPOINTS_ENCRYPTION_KEY: 'zu-kurz-und-geheim' }),
+    (err) => /AI_ENDPOINTS_ENCRYPTION_KEY/.test(err.message) && !err.message.includes('zu-kurz-und-geheim')
+  )
+})
+
 test('rejects non-positive or non-integer numbers', () => {
   assert.throws(() => loadWorkerConfig({ ...REQUIRED, TRANSCRIPTION_MAX_ATTEMPTS: '0' }), /TRANSCRIPTION_MAX_ATTEMPTS/)
   assert.throws(() => loadWorkerConfig({ ...REQUIRED, TRANSCRIPTION_POLL_INTERVAL_SECONDS: 'abc' }), /POLL_INTERVAL/)
