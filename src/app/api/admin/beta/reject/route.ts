@@ -1,23 +1,15 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient } from '@/lib/supabase/server'
+import { getAdminUser } from '@/lib/auth/admin'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-
-const ADMIN_EMAIL = 'malte.dudd@gmail.com'
 
 const RejectSchema = z.object({
   email: z.string().email(),
 })
 
 export async function POST(request: Request) {
-  // Auth check: only the admin may call this
-  const supabase = await createClient()
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser()
-
-  if (authError || !user || user.email !== ADMIN_EMAIL) {
+  // Auth check: only admins (user_roles) may call this
+  if (!(await getAdminUser())) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

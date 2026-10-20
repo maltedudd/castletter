@@ -1,10 +1,8 @@
 import { notFound, redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { getSessionUserWithRole } from '@/lib/auth/admin'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { Badge } from '@/components/ui/badge'
 import { AdminActions } from './AdminActions'
-
-const ADMIN_EMAIL = 'malte.dudd@gmail.com'
 
 type BetaRequest = {
   id: string
@@ -66,17 +64,13 @@ function StatusBadge({ status }: { status: BetaRequest['status'] }) {
 }
 
 export default async function AdminPage() {
-  const supabase = await createClient()
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const { user, isAdmin } = await getSessionUserWithRole()
 
   if (!user) {
     redirect('/login')
   }
 
-  if (user.email !== ADMIN_EMAIL) {
+  if (!isAdmin) {
     notFound()
   }
 

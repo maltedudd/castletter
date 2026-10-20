@@ -95,6 +95,13 @@ export interface SourceCategory {
   updated_at: string
 }
 
+/** NIAS-61: role of a user in `user_roles` (granted by the service role only). */
+export interface UserRole {
+  user_id: string
+  role: 'admin'
+  created_at: string
+}
+
 /** NIAS-58: what an AI endpoint is used for; one endpoint per purpose. */
 export type AiPurpose = 'transcription' | 'text_generation'
 
