@@ -3,6 +3,8 @@ import { getSessionUserWithRole } from '@/lib/auth/admin'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { Badge } from '@/components/ui/badge'
 import { AdminActions } from './AdminActions'
+import { AiEndpointsSection, type AiEndpointStatus } from './AiEndpointsSection'
+import { listEndpointStatus } from '@/lib/ai/endpoint-admin.mjs'
 
 type BetaRequest = {
   id: string
@@ -110,6 +112,12 @@ export default async function AdminPage() {
   const failedVideos: FailedVideoRow[] = failedVideoRows ?? []
   const sourceTitle = new Map(youtubeSources.map((s) => [s.id, s.title]))
 
+  // NIAS-59: AI endpoint per purpose (only key hints, never keys).
+  const aiEndpoints = await listEndpointStatus(admin)
+  if (aiEndpoints.error) {
+    console.error('Failed to load ai_endpoints:', aiEndpoints.error)
+  }
+
   return (
     <div className="min-h-screen section-spacing">
       <div className="max-w-4xl mx-auto container-spacing">
@@ -154,6 +162,14 @@ export default async function AdminPage() {
             </table>
           </div>
         )}
+
+        <AiEndpointsSection
+          endpoints={aiEndpoints.endpoints.map((endpoint): AiEndpointStatus => ({
+            ...(endpoint as Omit<AiEndpointStatus, 'updatedAtText'>),
+            updatedAtText: endpoint.updatedAt ? formatDate(endpoint.updatedAt) : null,
+          }))}
+          loadError={aiEndpoints.error}
+        />
 
         <div className="mt-12 mb-4">
           <h2 className="text-2xl font-bold">YouTube-Quellen</h2>
