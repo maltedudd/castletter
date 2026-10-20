@@ -24,7 +24,7 @@ const GENERATION_COLUMNS =
  * keeps going while there is a backlog.
  */
 export async function runGenerationOnce(deps) {
-  const { supabase, config, now, log, openrouter, sendEmail } = deps
+  const { supabase, config, now, log, textGeneration, sendEmail } = deps
   const cutoff = getEpisodeAgeCutoff(now(), config.maxEpisodeAgeDays)
 
   const staleReset = await resetStaleGeneratingEpisodes(supabase, cutoff, now())
@@ -43,10 +43,11 @@ export async function runGenerationOnce(deps) {
   if (!episode) return { worked: false, outcome: 'idle' }
 
   const startedAt = Date.now()
+  const { client: openrouter, model } = textGeneration()
   const outcome = await generateNewsletterForEpisode({
     supabase,
     openrouter,
-    model: config.openrouter.newsletterModel,
+    model,
     episode,
     now: now(),
   })

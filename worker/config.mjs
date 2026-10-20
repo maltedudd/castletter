@@ -1,4 +1,5 @@
 import { getOpenRouterConfig } from '../src/lib/cron/openrouter-config.mjs'
+import { MASTER_KEY_ENV, parseMasterKey } from '../src/lib/ai/endpoints.mjs'
 import { TRANSCRIBING_LEASE_MS } from '../src/lib/cron/transcribe-ack.mjs'
 
 export const DEFAULTS = {
@@ -45,6 +46,8 @@ export function loadWorkerConfig(env = process.env) {
   if (missing.length > 0) {
     throw new Error(`Fehlende Umgebungsvariablen: ${missing.join(', ')}`)
   }
+  // Only needed once an endpoint with an API key is stored; a set but invalid key fails fast.
+  if (env[MASTER_KEY_ENV]) parseMasterKey(env[MASTER_KEY_ENV])
 
   return {
     supabaseUrl,

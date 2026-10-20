@@ -16,10 +16,13 @@ function makeDeps(db, overrides = {}) {
     logs,
     mails,
     supabase: db,
-    config: { maxEpisodeAgeDays: 7, openrouter: { newsletterModel: 'google/gemini-2.5-flash' } },
+    config: { maxEpisodeAgeDays: 7 },
     now: () => NOW,
     log: (level, msg, data) => logs.push({ level, msg, ...data }),
-    openrouter: { chat: { completions: { create: async () => ({ choices: [{ message: { content: MODEL_OUTPUT } }] }) } } },
+    textGeneration: () => ({
+      client: { chat: { completions: { create: async () => ({ choices: [{ message: { content: MODEL_OUTPUT } }] }) } } },
+      model: 'google/gemini-2.5-flash',
+    }),
     sendEmail: async (mail) => { mails.push(mail) },
     ...overrides,
   }

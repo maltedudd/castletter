@@ -238,6 +238,29 @@ Doppelversand); der Log-Eintrag `send_sweep` zählt das unter `archiveErrors`.
 
 Benötigt zusätzlich `RESEND_API_KEY` und `APP_URL` (für den Einstellungs-Link in der Mail).
 
+## KI-Endpunkte (NIAS-58)
+
+Base-URL, Modell und API-Key gibt es je Zweck – **Transkription** (Audio → Text) und
+**Textgenerierung** (Zusammenfassungen, Digest-Überblick) – als genau einen
+OpenAI-kompatiblen Endpunkt in der Tabelle `ai_endpoints`
+(`supabase/migrations/20261020_create_ai_endpoints.sql`, gepflegt über den Admin-Bereich, NIAS-59).
+Ohne Eintrag für einen Zweck gilt das bisherige Verhalten: OpenRouter mit
+`OPENROUTER_API_KEY`, `OPENROUTER_TRANSCRIPTION_MODEL` bzw. `OPENROUTER_MODEL`. Solange die
+Migration fehlt, läuft der Worker ebenso mit diesen Env-Werten weiter.
+
+- Der Worker liest die Endpunkte vor jedem Durchlauf, höchstens jede Minute, aus der
+  Datenbank; Änderungen greifen ohne Neustart. Jede aktive Änderung loggt
+  `ai_endpoint_active` (Zweck, Quelle `database`/`env`, Name, Modell, Host – nie den Key).
+- Schlägt das Lesen später fehl, bleiben die zuletzt geladenen Endpunkte aktiv
+  (`ai_endpoints_refresh_failed`).
+- API-Keys liegen AES-256-GCM-verschlüsselt in der Tabelle. Den Schlüssel
+  `AI_ENDPOINTS_ENCRYPTION_KEY` (32 Byte Base64, `openssl rand -base64 32`) brauchen Vercel
+  und `worker/.env` mit **identischem** Wert, sobald ein Endpunkt mit Key gespeichert ist.
+  Ein gesetzter, aber ungültiger Wert lässt den Worker beim Start scheitern; ein falscher
+  Wert führt zu `iteration_failed` (Stage `ai_endpoints`) ohne Key-Werte im Log.
+- Lokale Endpunkte (z. B. Parakeet auf der ki-maschine) müssen von der Docker-VM aus
+  erreichbar sein; die Vercel-Cron-Routen erreichen nur öffentliche Endpunkte.
+
 ## Voraussetzungen
 
 1. Migrationen `supabase/migrations/20261003_add_episode_transcription_attempts.sql`,

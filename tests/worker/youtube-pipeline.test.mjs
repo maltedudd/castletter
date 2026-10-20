@@ -140,7 +140,6 @@ test('YouTube channel source runs through the common pipeline to newsletter_read
       maxAttempts: 3,
       downloadTimeoutMs: 1000,
       youtube: { captionLanguages: ['de', 'en'] },
-      openrouter: { newsletterModel: 'test/model' },
     },
     now: () => NOW,
     log: (level, msg, data) => logs.push({ level, msg, ...data }),
@@ -155,7 +154,10 @@ test('YouTube channel source runs through the common pipeline to newsletter_read
       return { ok: true, status: 200, text: async () => FEED_XML }
     },
     parseXml: async () => assert.fail('RSS parser is only for podcasts'),
-    openrouter: { chat: { completions: { create: async () => ({ choices: [{ message: { content: MODEL_OUTPUT } }] }) } } },
+    textGeneration: () => ({
+      client: { chat: { completions: { create: async () => ({ choices: [{ message: { content: MODEL_OUTPUT } }] }) } } },
+      model: 'test/model',
+    }),
     sendEmail: async (mail) => { mails.push(mail) },
   }
   deps.transcribeEpisodeAudio = createEpisodeTranscriber({

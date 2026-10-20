@@ -70,14 +70,17 @@ test('Website-Quelle durchläuft die gemeinsame Pipeline ohne Audio/STT bis news
   const parser = new Parser()
   const deps = {
     supabase: db,
-    config: { maxEpisodeAgeDays: 7, maxAttempts: 3, downloadTimeoutMs: 1000, youtube: { captionLanguages: ['de'] }, openrouter: { newsletterModel: 'test/model' } },
+    config: { maxEpisodeAgeDays: 7, maxAttempts: 3, downloadTimeoutMs: 1000, youtube: { captionLanguages: ['de'] } },
     now: () => NOW,
     log: () => {},
     fetchImpl,
     parseXml: (xml) => parser.parseString(xml),
-    openrouter: {
-      chat: { completions: { create: async ({ messages }) => { prompts.push(messages[0].content); return { choices: [{ message: { content: MODEL_OUTPUT } }] } } } },
-    },
+    textGeneration: () => ({
+      client: {
+        chat: { completions: { create: async ({ messages }) => { prompts.push(messages[0].content); return { choices: [{ message: { content: MODEL_OUTPUT } }] } } } },
+      },
+      model: 'test/model',
+    }),
     sendEmail: async (mail) => { mails.push(mail) },
   }
   deps.transcribeEpisodeAudio = createEpisodeTranscriber({
