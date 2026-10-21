@@ -212,8 +212,8 @@ Nummern der Inhalte, der Worker löst sie gegen genau diese Beiträge auf; Punkt
 Beleg werden verworfen, ohne belegte Kernthemen entfällt der Überblick. Gewichtung: Podcasts
 am stärksten, dann YouTube, dann Website (RSS) vor allem ergänzend. Der Worker erzeugt ihn
 beim Versand aus den gespeicherten Einzelzusammenfassungen (nicht aus Transkripten) im Stil
-der Nutzerin/des Nutzers (ein Modellaufruf pro Sammelmail,
-`OPENROUTER_MODEL`). Schlägt er fehl, geht die Sammelmail ohne Überblick raus
+der Nutzerin/des Nutzers (ein Modellaufruf pro Sammelmail, Endpunkt der
+Textgenerierung). Schlägt er fehl, geht die Sammelmail ohne Überblick raus
 (`digest_overview_failed` im Log). Der Vercel-Fallback-Cron erzeugt keinen Überblick.
 
 Das Alters-Limit gilt für die ganze Pipeline (statt der 48 h der Vercel-Crons).
@@ -244,13 +244,15 @@ Base-URL, Modell und API-Key gibt es je Zweck – **Transkription** (Audio → T
 **Textgenerierung** (Zusammenfassungen, Digest-Überblick) – als genau einen
 OpenAI-kompatiblen Endpunkt in der Tabelle `ai_endpoints`
 (`supabase/migrations/20261020_create_ai_endpoints.sql`, gepflegt über den Admin-Bereich, NIAS-59).
-Ohne Eintrag für einen Zweck gilt das bisherige Verhalten: OpenRouter mit
-`OPENROUTER_API_KEY`, `OPENROUTER_TRANSCRIPTION_MODEL` bzw. `OPENROUTER_MODEL`. Solange die
-Migration fehlt, läuft der Worker ebenso mit diesen Env-Werten weiter.
+Es gibt keinen Standard aus der Umgebung (NIAS-63): `OPENROUTER_*` wird nicht mehr gelesen.
+Ein Zweck ohne Eintrag ist nicht eingerichtet; der Worker loggt `ai_endpoint_missing`, und
+Transkription bzw. Zusammenfassung schlagen mit „Kein KI-Endpunkt … hinterlegt“ fehl (Retry
+später), bis ein Endpunkt gespeichert ist. Fehlt die Tabelle, scheitert die Stage
+`ai_endpoints`.
 
 - Der Worker liest die Endpunkte vor jedem Durchlauf, höchstens jede Minute, aus der
   Datenbank; Änderungen greifen ohne Neustart. Jede aktive Änderung loggt
-  `ai_endpoint_active` (Zweck, Quelle `database`/`env`, Name, Modell, Host – nie den Key).
+  `ai_endpoint_active` (Zweck, Slot, Name, Modell, Host – nie den Key).
 - Schlägt das Lesen später fehl, bleiben die zuletzt geladenen Endpunkte aktiv
   (`ai_endpoints_refresh_failed`).
 - API-Keys liegen AES-256-GCM-verschlüsselt in der Tabelle. Den Schlüssel
@@ -265,9 +267,9 @@ Migration fehlt, läuft der Worker ebenso mit diesen Env-Werten weiter.
   Liefert der primäre Endpunkt einen Fehler – egal welchen – oder bei der Textgenerierung eine
   leere Antwort, wiederholt der Worker dieselbe Anfrage einmal gegen den Fallback und loggt
   `ai_endpoint_fallback` (Zweck, von/nach, Fehler – nie den Key). Scheitert auch der Fallback,
-  gilt der Fehler wie bisher (Retry später). Ohne Fallback ändert sich nichts. Der Fallback
-  kann auch hinter dem Env-Standard stehen. Die Vercel-Cron-Routen nutzen nur den primären
-  Endpunkt.
+  gilt der Fehler wie bisher (Retry später). Ohne Fallback ändert sich nichts. Einen
+  Fallback gibt es nur zusammen mit einem Endpunkt; wird der Endpunkt gelöscht, fällt der
+  Fallback mit weg. Die Vercel-Cron-Routen nutzen nur den primären Endpunkt.
 
 ## Voraussetzungen
 

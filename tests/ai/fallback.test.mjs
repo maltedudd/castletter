@@ -5,7 +5,7 @@ import { EmptyCompletionError, createFallbackChatClient, withFallback } from '..
 
 function attempt(name, slot, client = {}) {
   return {
-    endpoint: { purpose: 'text_generation', slot, source: 'database', name, baseURL: `http://${name}:8080/v1`, apiKey: `sk-${name}`, model: `${name}-model` },
+    endpoint: { purpose: 'text_generation', slot, name, baseURL: `http://${name}:8080/v1`, apiKey: `sk-${name}`, model: `${name}-model` },
     client,
   }
 }
@@ -45,8 +45,8 @@ test('withFallback: jeder Fehler des Primären führt zum Fallback, geloggt ohne
   assert.equal(result, 'vom Fallback')
   assert.deepEqual(logs, [['warn', 'ai_endpoint_fallback', {
     purpose: 'text_generation',
-    from: { purpose: 'text_generation', slot: 'primary', source: 'database', name: 'a', model: 'a-model', host: 'a:8080' },
-    to: { purpose: 'text_generation', slot: 'fallback', source: 'database', name: 'b', model: 'b-model', host: 'b:8080' },
+    from: { purpose: 'text_generation', slot: 'primary', name: 'a', model: 'a-model', host: 'a:8080' },
+    to: { purpose: 'text_generation', slot: 'fallback', name: 'b', model: 'b-model', host: 'b:8080' },
     error: '404 model not found',
   }]])
   assert.ok(!JSON.stringify(logs).includes('sk-'))

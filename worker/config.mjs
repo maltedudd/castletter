@@ -1,4 +1,3 @@
-import { getOpenRouterConfig } from '../src/lib/cron/openrouter-config.mjs'
 import { MASTER_KEY_ENV, parseMasterKey } from '../src/lib/ai/endpoints.mjs'
 import { TRANSCRIBING_LEASE_MS } from '../src/lib/cron/transcribe-ack.mjs'
 
@@ -29,12 +28,10 @@ const MAX_STAGE_TIMEOUT_SECONDS = Math.floor(TRANSCRIBING_LEASE_MS / 1000) - 60
 export function loadWorkerConfig(env = process.env) {
   const supabaseUrl = env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL
   const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY
-  const openrouter = getOpenRouterConfig(env)
 
   const missing = []
   if (!supabaseUrl) missing.push('SUPABASE_URL')
   if (!serviceRoleKey) missing.push('SUPABASE_SERVICE_ROLE_KEY')
-  if (!openrouter.client.apiKey) missing.push('OPENROUTER_API_KEY')
 
   // Newsletter generation + sending is opt-in so the worker can be rolled out step by step.
   const newslettersEnabled = env.WORKER_NEWSLETTERS_ENABLED === 'true'
@@ -52,7 +49,6 @@ export function loadWorkerConfig(env = process.env) {
   return {
     supabaseUrl,
     serviceRoleKey,
-    openrouter,
     pollIntervalMs: positiveInt(env, 'TRANSCRIPTION_POLL_INTERVAL_SECONDS', DEFAULTS.pollIntervalSeconds) * 1000,
     maxEpisodeAgeDays: positiveInt(env, 'TRANSCRIPTION_MAX_EPISODE_AGE_DAYS', DEFAULTS.maxEpisodeAgeDays),
     maxAttempts: positiveInt(env, 'TRANSCRIPTION_MAX_ATTEMPTS', DEFAULTS.maxAttempts),

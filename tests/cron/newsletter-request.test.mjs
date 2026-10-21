@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildNewsletterCompletionOptions, withNewsletterModel } from '../../src/lib/cron/newsletter-request.mjs'
 
-test('disables reasoning for the default Gemini newsletter model to protect visible output', () => {
+test('disables reasoning for Gemini 2.5 Flash to protect visible output', () => {
   const messages = [{ role: 'user', content: 'unchanged newsletter prompt' }]
 
   assert.deepEqual(buildNewsletterCompletionOptions('google/gemini-2.5-flash', messages), {
@@ -14,7 +14,7 @@ test('disables reasoning for the default Gemini newsletter model to protect visi
   })
 })
 
-test('leaves reasoning unspecified for a generic model override', () => {
+test('leaves reasoning unspecified for any other model', () => {
   const messages = [{ role: 'user', content: 'unchanged newsletter prompt' }]
   const options = buildNewsletterCompletionOptions('provider/custom-model', messages)
 

@@ -9,8 +9,8 @@ import {
   decryptApiKey,
   describeAiEndpoint,
   encryptApiKey,
-  getEnvAiEndpoints,
   parseMasterKey,
+  requireAiEndpoint,
   resolveAiEndpoints,
   toClientOptions,
   validateEndpointInput,
@@ -18,7 +18,7 @@ import {
 import { makeFakeSupabase } from '../helpers/fake-supabase.mjs'
 
 const MASTER = randomBytes(32).toString('base64')
-const ENV = { OPENROUTER_API_KEY: 'or-key', AI_ENDPOINTS_ENCRYPTION_KEY: MASTER }
+const ENV = { AI_ENDPOINTS_ENCRYPTION_KEY: MASTER }
 
 function failingSupabase(error) {
   return { from: () => ({ select: async () => ({ data: null, error }) }) }
@@ -107,24 +107,22 @@ test('validateEndpointInput meldet jedes ungültige Feld', () => {
   assert.equal(validateEndpointInput(null).ok, false)
 })
 
-test('ohne gespeicherte Endpunkte gilt das bisherige OpenRouter-Env-Verhalten', async () => {
-  const endpoints = await resolveAiEndpoints({ supabase: makeFakeSupabase({ ai_endpoints: [] }), env: { OPENROUTER_API_KEY: 'or-key' } })
-  const env = getEnvAiEndpoints({ OPENROUTER_API_KEY: 'or-key' })
-  assert.deepEqual(endpoints, { transcription: { ...env.transcription, fallback: null }, text_generation: { ...env.text_generation, fallback: null } })
-  assert.deepEqual(endpoints.transcription, {
-    purpose: 'transcription', slot: 'primary', source: 'env', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'or-key', model: 'openai/whisper-large-v3', fallback: null,
-  })
-  assert.equal(endpoints.text_generation.model, 'google/gemini-2.5-flash')
-  assert.equal(getEnvAiEndpoints({ OPENROUTER_MODEL: 'x/y' }).text_generation.model, 'x/y')
+test('ohne gespeicherte Endpunkte ist kein Zweck eingerichtet – nichts aus der Env', async () => {
+  const env = { ...ENV, OPENROUTER_API_KEY: 'or-key', OPENROUTER_MODEL: 'x/y', OPENROUTER_TRANSCRIPTION_MODEL: 'w' }
+  const endpoints = await resolveAiEndpoints({ supabase: makeFakeSupabase({ ai_endpoints: [] }), env })
+  assert.deepEqual(endpoints, { transcription: null, text_generation: null })
+  assert.throws(() => requireAiEndpoint(endpoints, 'transcription'), (err) => err instanceof AiEndpointError && /Kein KI-Endpunkt für transcription hinterlegt/.test(err.message))
 })
 
-test('ein gespeicherter Endpunkt ersetzt nur seinen Zweck', async () => {
-  const supabase = makeFakeSupabase({ ai_endpoints: [storedRow(), { purpose: 'unbekannt', name: 'x', base_url: 'http://x', model: 'm', api_key_encrypted: null }] })
+test('ein gespeicherter Endpunkt gilt nur für seinen Zweck', async () => {
+  const supabase = makeFakeSupabase({ ai_endpoints: [storedRow(), { purpose: 'unbekannt', slot: 'primary', name: 'x', base_url: 'http://x', model: 'm', api_key_encrypted: null }] })
   const endpoints = await resolveAiEndpoints({ supabase, env: ENV })
-  assert.deepEqual(endpoints.transcription, {
-    purpose: 'transcription', slot: 'primary', source: 'database', name: 'Parakeet lokal', baseURL: 'http://ki-maschine:8000/v1', apiKey: 'sk-parakeet-123456', model: 'parakeet-tdt-0.6b-v3', fallback: null,
-  })
-  assert.equal(endpoints.text_generation.source, 'env')
+  const expected = {
+    purpose: 'transcription', slot: 'primary', name: 'Parakeet lokal', baseURL: 'http://ki-maschine:8000/v1', apiKey: 'sk-parakeet-123456', model: 'parakeet-tdt-0.6b-v3', fallback: null,
+  }
+  assert.deepEqual(endpoints.transcription, expected)
+  assert.deepEqual(requireAiEndpoint(endpoints, 'transcription'), expected)
+  assert.equal(endpoints.text_generation, null)
   assert.deepEqual(Object.keys(endpoints).sort(), ['text_generation', 'transcription'])
 })
 
@@ -134,48 +132,43 @@ test('Fallback hängt am primären Endpunkt, egal in welcher Reihenfolge die Zei
     api_key_encrypted: encryptApiKey('sk-or-fallback', { masterKey: MASTER, purpose: 'transcription', slot: 'fallback' }),
   })
   const expectedFallback = {
-    purpose: 'transcription', slot: 'fallback', source: 'database', name: 'Whisper', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-fallback', model: 'openai/whisper-large-v3',
+    purpose: 'transcription', slot: 'fallback', name: 'Whisper', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-fallback', model: 'openai/whisper-large-v3',
   }
   for (const rows of [[storedRow(), fallbackRow], [fallbackRow, storedRow()]]) {
     const endpoints = await resolveAiEndpoints({ supabase: makeFakeSupabase({ ai_endpoints: rows }), env: ENV })
     assert.equal(endpoints.transcription.name, 'Parakeet lokal')
     assert.deepEqual(endpoints.transcription.fallback, expectedFallback)
-    assert.equal(endpoints.text_generation.fallback, null)
+    assert.equal(endpoints.text_generation, null)
   }
 })
 
-test('Fallback geht auch hinter dem Env-Standard; unbekannte Slots werden ignoriert', async () => {
+test('ein Fallback ohne Endpunkt richtet den Zweck nicht ein; unbekannte Slots werden ignoriert', async () => {
   const supabase = makeFakeSupabase({ ai_endpoints: [
     storedRow({ purpose: 'text_generation', slot: 'fallback', name: 'Qwen', model: 'qwen', api_key_encrypted: null }),
     storedRow({ slot: 'dritter' }),
   ] })
   const endpoints = await resolveAiEndpoints({ supabase, env: ENV })
-  assert.equal(endpoints.text_generation.source, 'env')
-  assert.equal(endpoints.text_generation.fallback.name, 'Qwen')
-  assert.equal(endpoints.text_generation.fallback.apiKey, KEYLESS_API_KEY)
-  assert.equal(endpoints.transcription.source, 'env')
-  assert.equal(endpoints.transcription.fallback, null)
+  assert.deepEqual(endpoints, { transcription: null, text_generation: null })
 })
 
 test('Endpunkt ohne Key nutzt den Platzhalter und braucht keinen Master-Key', async () => {
   const supabase = makeFakeSupabase({ ai_endpoints: [storedRow({ purpose: 'text_generation', api_key_encrypted: null })] })
-  const endpoints = await resolveAiEndpoints({ supabase, env: { OPENROUTER_API_KEY: 'or-key' } })
+  const endpoints = await resolveAiEndpoints({ supabase, env: {} })
   assert.equal(endpoints.text_generation.apiKey, KEYLESS_API_KEY)
 })
 
 test('gespeicherter Key ohne oder mit falschem Master-Key: Fehler ohne Key-Werte', async () => {
   const supabase = makeFakeSupabase({ ai_endpoints: [storedRow()] })
-  await assert.rejects(resolveAiEndpoints({ supabase, env: { OPENROUTER_API_KEY: 'or-key' } }), /AI_ENDPOINTS_ENCRYPTION_KEY fehlt/)
+  await assert.rejects(resolveAiEndpoints({ supabase, env: {} }), /AI_ENDPOINTS_ENCRYPTION_KEY fehlt/)
   await assert.rejects(
     resolveAiEndpoints({ supabase, env: { ...ENV, AI_ENDPOINTS_ENCRYPTION_KEY: randomBytes(32).toString('base64') } }),
     (err) => err instanceof AiEndpointError && !err.message.includes('sk-parakeet') && !err.message.includes(MASTER)
   )
 })
 
-test('fehlende Tabelle (Migration noch offen) fällt auf Env zurück, andere Fehler nicht', async () => {
+test('jeder Lesefehler wirft, auch eine fehlende Tabelle', async () => {
   for (const code of ['PGRST205', '42P01']) {
-    const endpoints = await resolveAiEndpoints({ supabase: failingSupabase({ code, message: 'missing' }), env: ENV })
-    assert.equal(endpoints.transcription.source, 'env')
+    await assert.rejects(resolveAiEndpoints({ supabase: failingSupabase({ code, message: 'missing' }), env: ENV }), /nicht gelesen werden: missing/)
   }
   await assert.rejects(
     resolveAiEndpoints({ supabase: failingSupabase({ code: '57014', message: 'timeout' }), env: ENV }),
@@ -190,13 +183,13 @@ test('Resolver cacht für die TTL und liest danach neu', async () => {
   let clock = 0
   const get = createAiEndpointResolver({ supabase, env: ENV, ttlMs: 1000, now: () => clock })
 
-  assert.equal((await get()).transcription.source, 'env')
+  assert.equal((await get()).transcription, null)
   rows.push(storedRow())
   clock = 999
-  assert.equal((await get()).transcription.source, 'env')
+  assert.equal((await get()).transcription, null)
   assert.equal(reads, 1)
   clock = 1000
-  assert.equal((await get()).transcription.source, 'database')
+  assert.equal((await get()).transcription.name, 'Parakeet lokal')
   assert.equal(reads, 2)
 })
 
@@ -207,10 +200,10 @@ test('Resolver behält bei Lesefehler den letzten Stand, ohne Stand wirft er', a
   let clock = 0
   const get = createAiEndpointResolver({ supabase, env: ENV, ttlMs: 10, now: () => clock, log: (...args) => logs.push(args) })
 
-  assert.equal((await get()).transcription.source, 'database')
+  assert.equal((await get()).transcription.name, 'Parakeet lokal')
   error = { code: 'XX000', message: 'down' }
   clock = 10
-  assert.equal((await get()).transcription.source, 'database')
+  assert.equal((await get()).transcription.name, 'Parakeet lokal')
   assert.deepEqual(logs, [['warn', 'ai_endpoints_refresh_failed', { error: 'KI-Endpunkte konnten nicht gelesen werden: down' }]])
 
   const fresh = createAiEndpointResolver({ supabase, env: ENV })
@@ -218,9 +211,9 @@ test('Resolver behält bei Lesefehler den letzten Stand, ohne Stand wirft er', a
 })
 
 test('toClientOptions und describeAiEndpoint geben den Key nur an den Client', () => {
-  const endpoint = { purpose: 'transcription', slot: 'fallback', source: 'database', name: 'P', baseURL: 'http://host:8000/v1', apiKey: 'sk-geheim', model: 'm' }
+  const endpoint = { purpose: 'transcription', slot: 'fallback', name: 'P', baseURL: 'http://host:8000/v1', apiKey: 'sk-geheim', model: 'm' }
   assert.deepEqual(toClientOptions(endpoint), { baseURL: 'http://host:8000/v1', apiKey: 'sk-geheim' })
   const described = describeAiEndpoint(endpoint)
-  assert.deepEqual(described, { purpose: 'transcription', slot: 'fallback', source: 'database', name: 'P', model: 'm', host: 'host:8000' })
+  assert.deepEqual(described, { purpose: 'transcription', slot: 'fallback', name: 'P', model: 'm', host: 'host:8000' })
   assert.ok(!JSON.stringify(described).includes('sk-geheim'))
 })

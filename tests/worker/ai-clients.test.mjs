@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createAiClients } from '../../worker/ai-clients.mjs'
 
 function endpoint(purpose, overrides = {}) {
-  return { purpose, slot: 'primary', source: 'env', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'or-key', model: `${purpose}-model`, ...overrides }
+  return { purpose, slot: 'primary', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'or-key', model: `${purpose}-model`, ...overrides }
 }
 
 function setup(initial) {
@@ -42,7 +42,7 @@ test('vor dem ersten refresh gibt es keinen Client', () => {
 
 test('baut je Zweck einen Client und nutzt ihn für Transkription und Text', async () => {
   const { ai, created, logs } = setup({
-    transcription: endpoint('transcription', { source: 'database', name: 'Parakeet', baseURL: 'http://ki:8000/v1', apiKey: 'sk-p' }),
+    transcription: endpoint('transcription', { name: 'Parakeet', baseURL: 'http://ki:8000/v1', apiKey: 'sk-p' }),
     text_generation: endpoint('text_generation'),
   })
   await ai.refresh()
@@ -53,7 +53,7 @@ test('baut je Zweck einen Client und nutzt ihn für Transkription und Text', asy
   ])
   assert.equal(await ai.transcribeChunk(Buffer.from('audio'), { contentType: 'audio/mpeg', ext: 'mp3', basename: 'episode' }), 'http://ki:8000/v1|transcription-model')
   assert.deepEqual(ai.textGeneration(), { client: created[1], model: 'text_generation-model' })
-  assert.deepEqual(logs[0], ['info', 'ai_endpoint_active', { purpose: 'transcription', slot: 'primary', source: 'database', name: 'Parakeet', model: 'transcription-model', host: 'ki:8000' }])
+  assert.deepEqual(logs[0], ['info', 'ai_endpoint_active', { purpose: 'transcription', slot: 'primary', name: 'Parakeet', model: 'transcription-model', host: 'ki:8000' }])
   assert.ok(!JSON.stringify(logs).includes('sk-p') && !JSON.stringify(logs).includes('or-key'))
 })
 
@@ -93,9 +93,9 @@ test('fehlgeschlagener refresh lässt die bisherigen Clients aktiv', async () =>
 })
 
 test('Transkription: Fehler des Primären → Fallback, ohne Fallback der Fehler', async () => {
-  const fallback = endpoint('transcription', { slot: 'fallback', source: 'database', name: 'Whisper', model: 'whisper', apiKey: 'sk-f' })
+  const fallback = endpoint('transcription', { slot: 'fallback', name: 'Whisper', model: 'whisper', apiKey: 'sk-f' })
   const { ai, created, logs, setEndpoints } = setup({
-    transcription: { ...endpoint('transcription', { source: 'database', name: 'Parakeet', baseURL: 'http://down:8091/v1' }), fallback },
+    transcription: { ...endpoint('transcription', { name: 'Parakeet', baseURL: 'http://down:8091/v1' }), fallback },
     text_generation: endpoint('text_generation'),
   })
   await ai.refresh()
@@ -113,7 +113,7 @@ test('Transkription: Fehler des Primären → Fallback, ohne Fallback der Fehler
 
   // Fallback removed in the admin area: rebuilt, the error surfaces again.
   setEndpoints({
-    transcription: { ...endpoint('transcription', { source: 'database', name: 'Parakeet', baseURL: 'http://down:8091/v1' }), fallback: null },
+    transcription: { ...endpoint('transcription', { name: 'Parakeet', baseURL: 'http://down:8091/v1' }), fallback: null },
     text_generation: endpoint('text_generation'),
   })
   await ai.refresh()
@@ -137,4 +137,24 @@ test('Text: Fallback mit eigenem Modell und Gemini-Optionen nur für Gemini', as
   assert.equal(down.calls[0].model, 'qwen')
   assert.equal('reasoning' in down.calls[0], false)
   assert.deepEqual(fallback.calls[0].reasoning, { effort: 'none' })
+})
+
+test('Zweck ohne Endpunkt: einmal ai_endpoint_missing, klare Fehlermeldung, nach Eintrag wieder aktiv', async () => {
+  const { ai, logs, setEndpoints } = setup({ transcription: null, text_generation: endpoint('text_generation') })
+  await ai.refresh()
+  await ai.refresh()
+  assert.deepEqual(logs.filter(([, msg]) => msg === 'ai_endpoint_missing'), [['warn', 'ai_endpoint_missing', { purpose: 'transcription' }]])
+  assert.throws(
+    () => ai.transcribeChunk(Buffer.from('audio'), { contentType: 'audio/mpeg', ext: 'mp3', basename: 'e' }),
+    /Kein KI-Endpunkt für transcription hinterlegt/
+  )
+  assert.equal(ai.textGeneration().model, 'text_generation-model')
+
+  setEndpoints({ transcription: endpoint('transcription', { name: 'Parakeet' }), text_generation: endpoint('text_generation') })
+  await ai.refresh()
+  assert.equal(await ai.transcribeChunk(Buffer.from('audio'), { contentType: 'audio/mpeg', ext: 'mp3', basename: 'e' }), 'https://openrouter.ai/api/v1|transcription-model')
+
+  setEndpoints({ transcription: null, text_generation: endpoint('text_generation') })
+  await ai.refresh()
+  assert.equal(logs.filter(([, msg]) => msg === 'ai_endpoint_missing').length, 2)
 })
