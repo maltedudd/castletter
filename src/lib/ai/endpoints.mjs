@@ -2,14 +2,16 @@
 // server used for transcription and for text generation are stored in Supabase
 // (`ai_endpoints`, one row per purpose) instead of being fixed in code. A purpose without a row
 // keeps the previous environment behaviour (OpenRouter + OPENROUTER_*). API keys are stored
-// AES-256-GCM-encrypted with AI_ENDPOINTS_ENCRYPTION_KEY. Dependency-free (node:crypto only),
-// shared by the Vercel routes, the admin area and the Docker worker.
+// AES-256-GCM-encrypted with AI_ENDPOINTS_ENCRYPTION_KEY. A second row per purpose (slot
+// 'fallback', NIAS-62) is tried when the primary endpoint fails. Dependency-free (node:crypto
+// only), shared by the Vercel routes, the admin area and the Docker worker.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { getOpenRouterConfig, OPENROUTER_BASE_URL } from '../cron/openrouter-config.mjs'
 
 export const AI_ENDPOINTS_TABLE = 'ai_endpoints'
 export const AI_PURPOSES = ['transcription', 'text_generation']
+export const AI_SLOTS = ['primary', 'fallback']
 export const MASTER_KEY_ENV = 'AI_ENDPOINTS_ENCRYPTION_KEY'
 export const DEFAULT_CACHE_TTL_MS = 60_000
 // The OpenAI SDK insists on an API key; keyless local servers ignore this bearer.
@@ -36,6 +38,10 @@ export function isAiPurpose(value) {
   return AI_PURPOSES.includes(value)
 }
 
+export function isAiSlot(value) {
+  return AI_SLOTS.includes(value)
+}
+
 /** Decodes the 32-byte master key (base64, e.g. `openssl rand -base64 32`). */
 export function parseMasterKey(raw) {
   if (Buffer.isBuffer(raw)) {
@@ -54,22 +60,23 @@ export function parseMasterKey(raw) {
 }
 
 /**
- * Encrypts an API key for one purpose as `v1:<iv>:<tag>:<ciphertext>` (base64 parts). The
- * purpose is authenticated data, so a ciphertext copied into another row fails to decrypt.
+ * Encrypts an API key for one purpose and slot as `v1:<iv>:<tag>:<ciphertext>` (base64 parts).
+ * Purpose and slot are authenticated data, so a ciphertext copied into another row fails to
+ * decrypt. The primary slot uses the bare purpose, as before slots existed.
  */
-export function encryptApiKey(apiKey, { masterKey, purpose }) {
-  assertPurpose(purpose)
+export function encryptApiKey(apiKey, { masterKey, purpose, slot = 'primary' }) {
+  const aad = additionalData(purpose, slot)
   const iv = randomBytes(IV_BYTES)
   const cipher = createCipheriv(CIPHER, parseMasterKey(masterKey), iv)
-  cipher.setAAD(Buffer.from(purpose))
+  cipher.setAAD(aad)
   const ciphertext = Buffer.concat([cipher.update(apiKey, 'utf8'), cipher.final()])
   return [CIPHERTEXT_VERSION, iv, cipher.getAuthTag(), ciphertext]
     .map((part) => (typeof part === 'string' ? part : part.toString('base64')))
     .join(':')
 }
 
-export function decryptApiKey(stored, { masterKey, purpose }) {
-  assertPurpose(purpose)
+export function decryptApiKey(stored, { masterKey, purpose, slot = 'primary' }) {
+  const aad = additionalData(purpose, slot)
   const key = parseMasterKey(masterKey)
   const parts = typeof stored === 'string' ? stored.split(':') : []
   if (parts.length !== 4 || parts[0] !== CIPHERTEXT_VERSION) {
@@ -78,7 +85,7 @@ export function decryptApiKey(stored, { masterKey, purpose }) {
   const [iv, tag, ciphertext] = parts.slice(1).map((part) => Buffer.from(part, 'base64'))
   try {
     const decipher = createDecipheriv(CIPHER, key, iv)
-    decipher.setAAD(Buffer.from(purpose))
+    decipher.setAAD(aad)
     decipher.setAuthTag(tag)
     return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
   } catch {
@@ -93,7 +100,7 @@ export function apiKeyHint(apiKey) {
 }
 
 /**
- * Validates admin input for one endpoint. `apiKey` may be omitted/empty (keyless server, or
+ * Validates admin input for one endpoint (`slot` defaults to 'primary'). `apiKey` may be omitted/empty (keyless server, or
  * "keep the stored key" when editing — the caller decides). Returns `{ ok: true, value }` with
  * trimmed values and the base URL without trailing slashes, or `{ ok: false, errors }` keyed by field.
  */
@@ -103,6 +110,9 @@ export function validateEndpointInput(input) {
 
   const purpose = text(input?.purpose)
   if (!isAiPurpose(purpose)) errors.purpose = 'Unbekannter Zweck'
+
+  const slot = input?.slot === undefined ? 'primary' : text(input.slot)
+  if (!isAiSlot(slot)) errors.slot = 'Unbekannter Slot'
 
   const name = text(input?.name)
   if (name.length === 0 || name.length > LIMITS.name) errors.name = `Name muss 1–${LIMITS.name} Zeichen lang sein`
@@ -117,7 +127,7 @@ export function validateEndpointInput(input) {
   if (apiKey.length > LIMITS.apiKey || /\s/.test(apiKey)) errors.apiKey = 'API-Key ist ungültig'
 
   if (Object.keys(errors).length > 0) return { ok: false, errors }
-  return { ok: true, value: { purpose, name, baseUrl, model, apiKey: apiKey || null } }
+  return { ok: true, value: { purpose, slot, name, baseUrl, model, apiKey: apiKey || null } }
 }
 
 function normalizeBaseUrl(raw) {
@@ -139,6 +149,7 @@ export function getEnvAiEndpoints(env = process.env) {
   const openrouter = getOpenRouterConfig(env)
   const fromEnv = (purpose, model) => ({
     purpose,
+    slot: 'primary',
     source: 'env',
     name: 'OpenRouter',
     baseURL: OPENROUTER_BASE_URL,
@@ -152,34 +163,40 @@ export function getEnvAiEndpoints(env = process.env) {
 }
 
 /**
- * Reads the stored endpoints and returns `{ transcription, text_generation }`, each
- * `{ purpose, source: 'database' | 'env', name, baseURL, apiKey, model }`. A purpose without a
- * row — or a database without the table yet — falls back to the environment. Any other read
- * or decryption failure throws an AiEndpointError, never with key material in it.
+ * Reads the stored endpoints and returns `{ transcription, text_generation }`, each the primary
+ * `{ purpose, slot, source: 'database' | 'env', name, baseURL, apiKey, model, fallback }` with
+ * `fallback` the stored fallback endpoint (same shape, without `fallback`) or null. A purpose
+ * without a primary row — or a database without the table yet — uses the environment as
+ * primary. Any other read or decryption failure throws an AiEndpointError, never with key
+ * material in it.
  */
 export async function resolveAiEndpoints({ supabase, env = process.env }) {
-  const endpoints = getEnvAiEndpoints(env)
+  const defaults = getEnvAiEndpoints(env)
+  const endpoints = Object.fromEntries(AI_PURPOSES.map((purpose) => [purpose, { ...defaults[purpose], fallback: null }]))
 
   const { data, error } = await supabase
     .from(AI_ENDPOINTS_TABLE)
-    .select('purpose, name, base_url, model, api_key_encrypted')
+    .select('purpose, slot, name, base_url, model, api_key_encrypted')
   if (error) {
     if (MISSING_TABLE_CODES.has(error.code)) return endpoints
     throw new AiEndpointError(`KI-Endpunkte konnten nicht gelesen werden: ${error.message}`)
   }
 
-  for (const row of data ?? []) {
-    if (!isAiPurpose(row.purpose)) continue
-    endpoints[row.purpose] = {
+  const rows = (data ?? []).filter((row) => isAiPurpose(row.purpose) && isAiSlot(row.slot))
+  for (const row of rows) {
+    const endpoint = {
       purpose: row.purpose,
+      slot: row.slot,
       source: 'database',
       name: row.name,
       baseURL: row.base_url,
       apiKey: row.api_key_encrypted
-        ? decryptApiKey(row.api_key_encrypted, { masterKey: env[MASTER_KEY_ENV], purpose: row.purpose })
+        ? decryptApiKey(row.api_key_encrypted, { masterKey: env[MASTER_KEY_ENV], purpose: row.purpose, slot: row.slot })
         : KEYLESS_API_KEY,
       model: row.model,
     }
+    if (row.slot === 'fallback') endpoints[row.purpose].fallback = endpoint
+    else endpoints[row.purpose] = { ...endpoint, fallback: endpoints[row.purpose].fallback }
   }
   return endpoints
 }
@@ -216,9 +233,11 @@ export function describeAiEndpoint(endpoint) {
   try {
     host = new URL(endpoint.baseURL).host
   } catch {}
-  return { purpose: endpoint.purpose, source: endpoint.source, name: endpoint.name, model: endpoint.model, host }
+  return { purpose: endpoint.purpose, slot: endpoint.slot, source: endpoint.source, name: endpoint.name, model: endpoint.model, host }
 }
 
-function assertPurpose(purpose) {
+function additionalData(purpose, slot) {
   if (!isAiPurpose(purpose)) throw new AiEndpointError(`Unbekannter Zweck: ${purpose}`)
+  if (!isAiSlot(slot)) throw new AiEndpointError(`Unbekannter Slot: ${slot}`)
+  return Buffer.from(slot === 'primary' ? purpose : `${purpose}:${slot}`)
 }

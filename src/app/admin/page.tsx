@@ -3,7 +3,7 @@ import { getSessionUserWithRole } from '@/lib/auth/admin'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { Badge } from '@/components/ui/badge'
 import { AdminActions } from './AdminActions'
-import { AiEndpointsSection, type AiEndpointStatus } from './AiEndpointsSection'
+import { AiEndpointsSection, type AiEndpointSlotStatus, type AiEndpointStatus } from './AiEndpointsSection'
 import { listEndpointStatus } from '@/lib/ai/endpoint-admin.mjs'
 
 type BetaRequest = {
@@ -112,7 +112,7 @@ export default async function AdminPage() {
   const failedVideos: FailedVideoRow[] = failedVideoRows ?? []
   const sourceTitle = new Map(youtubeSources.map((s) => [s.id, s.title]))
 
-  // NIAS-59: AI endpoint per purpose (only key hints, never keys).
+  // NIAS-59/62: AI endpoint and optional fallback per purpose (only key hints, never keys).
   const aiEndpoints = await listEndpointStatus(admin)
   if (aiEndpoints.error) {
     console.error('Failed to load ai_endpoints:', aiEndpoints.error)
@@ -164,10 +164,16 @@ export default async function AdminPage() {
         )}
 
         <AiEndpointsSection
-          endpoints={aiEndpoints.endpoints.map((endpoint): AiEndpointStatus => ({
-            ...(endpoint as Omit<AiEndpointStatus, 'updatedAtText'>),
-            updatedAtText: endpoint.updatedAt ? formatDate(endpoint.updatedAt) : null,
-          }))}
+          endpoints={aiEndpoints.endpoints.map((endpoint): AiEndpointStatus => {
+            const withDate = <T extends { updatedAt: string | null }>(status: T) => ({
+              ...status,
+              updatedAtText: status.updatedAt ? formatDate(status.updatedAt) : null,
+            })
+            return {
+              ...(withDate(endpoint) as Omit<AiEndpointStatus, 'fallback'>),
+              fallback: endpoint.fallback ? (withDate(endpoint.fallback) as AiEndpointSlotStatus) : null,
+            }
+          })}
           loadError={aiEndpoints.error}
         />
 

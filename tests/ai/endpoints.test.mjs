@@ -28,6 +28,7 @@ function storedRow(overrides = {}) {
   const purpose = overrides.purpose ?? 'transcription'
   return {
     purpose,
+    slot: 'primary',
     name: 'Parakeet lokal',
     base_url: 'http://ki-maschine:8000/v1',
     model: 'parakeet-tdt-0.6b-v3',
@@ -69,6 +70,17 @@ test('API-Key: falscher Master-Key, Manipulation und Fremdformat schlagen fehl',
   assert.throws(() => encryptApiKey('x', { masterKey: MASTER, purpose: 'chat' }), /Unbekannter Zweck/)
 })
 
+test('API-Key: an den Slot gebunden, primär kompatibel zu Chiffraten ohne Slot', () => {
+  const primary = encryptApiKey('sk-test', { masterKey: MASTER, purpose: 'transcription' })
+  assert.equal(decryptApiKey(primary, { masterKey: MASTER, purpose: 'transcription', slot: 'primary' }), 'sk-test')
+  assert.throws(() => decryptApiKey(primary, { masterKey: MASTER, purpose: 'transcription', slot: 'fallback' }), AiEndpointError)
+
+  const fallback = encryptApiKey('sk-test', { masterKey: MASTER, purpose: 'transcription', slot: 'fallback' })
+  assert.equal(decryptApiKey(fallback, { masterKey: MASTER, purpose: 'transcription', slot: 'fallback' }), 'sk-test')
+  assert.throws(() => decryptApiKey(fallback, { masterKey: MASTER, purpose: 'transcription' }), AiEndpointError)
+  assert.throws(() => encryptApiKey('x', { masterKey: MASTER, purpose: 'transcription', slot: 'dritter' }), /Unbekannter Slot/)
+})
+
 test('apiKeyHint zeigt höchstens die letzten vier Zeichen', () => {
   assert.equal(apiKeyHint('sk-or-v1-abcdef1234'), '…1234')
   assert.equal(apiKeyHint('kurz'), '…')
@@ -78,15 +90,16 @@ test('apiKeyHint zeigt höchstens die letzten vier Zeichen', () => {
 test('validateEndpointInput trimmt, normalisiert die URL und erlaubt fehlenden Key', () => {
   assert.deepEqual(
     validateEndpointInput({ purpose: 'transcription', name: ' Parakeet ', baseUrl: 'http://192.168.0.20:8000/v1/', model: ' parakeet ', apiKey: '' }),
-    { ok: true, value: { purpose: 'transcription', name: 'Parakeet', baseUrl: 'http://192.168.0.20:8000/v1', model: 'parakeet', apiKey: null } }
+    { ok: true, value: { purpose: 'transcription', slot: 'primary', name: 'Parakeet', baseUrl: 'http://192.168.0.20:8000/v1', model: 'parakeet', apiKey: null } }
   )
+  assert.equal(validateEndpointInput({ purpose: 'transcription', slot: 'fallback', name: 'n', baseUrl: 'http://h/v1', model: 'm' }).value.slot, 'fallback')
   assert.equal(validateEndpointInput({ purpose: 'text_generation', name: 'OR', baseUrl: 'https://openrouter.ai/api/v1', model: 'm', apiKey: ' sk-1 ' }).value.apiKey, 'sk-1')
 })
 
 test('validateEndpointInput meldet jedes ungültige Feld', () => {
-  const result = validateEndpointInput({ purpose: 'chat', name: '', baseUrl: 'ftp://host', model: 'x'.repeat(201), apiKey: 'a b' })
+  const result = validateEndpointInput({ purpose: 'chat', slot: 'dritter', name: '', baseUrl: 'ftp://host', model: 'x'.repeat(201), apiKey: 'a b' })
   assert.equal(result.ok, false)
-  assert.deepEqual(Object.keys(result.errors).sort(), ['apiKey', 'baseUrl', 'model', 'name', 'purpose'])
+  assert.deepEqual(Object.keys(result.errors).sort(), ['apiKey', 'baseUrl', 'model', 'name', 'purpose', 'slot'])
 
   for (const baseUrl of ['', 'kein-url', 'https://user:pw@host/v1', 'https://host/v1?x=1', 'https://host/v1#a', `https://h/${'a'.repeat(500)}`]) {
     assert.ok(validateEndpointInput({ purpose: 'transcription', name: 'n', model: 'm', baseUrl }).errors?.baseUrl, baseUrl)
@@ -96,9 +109,10 @@ test('validateEndpointInput meldet jedes ungültige Feld', () => {
 
 test('ohne gespeicherte Endpunkte gilt das bisherige OpenRouter-Env-Verhalten', async () => {
   const endpoints = await resolveAiEndpoints({ supabase: makeFakeSupabase({ ai_endpoints: [] }), env: { OPENROUTER_API_KEY: 'or-key' } })
-  assert.deepEqual(endpoints, getEnvAiEndpoints({ OPENROUTER_API_KEY: 'or-key' }))
+  const env = getEnvAiEndpoints({ OPENROUTER_API_KEY: 'or-key' })
+  assert.deepEqual(endpoints, { transcription: { ...env.transcription, fallback: null }, text_generation: { ...env.text_generation, fallback: null } })
   assert.deepEqual(endpoints.transcription, {
-    purpose: 'transcription', source: 'env', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'or-key', model: 'openai/whisper-large-v3',
+    purpose: 'transcription', slot: 'primary', source: 'env', name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'or-key', model: 'openai/whisper-large-v3', fallback: null,
   })
   assert.equal(endpoints.text_generation.model, 'google/gemini-2.5-flash')
   assert.equal(getEnvAiEndpoints({ OPENROUTER_MODEL: 'x/y' }).text_generation.model, 'x/y')
@@ -108,10 +122,39 @@ test('ein gespeicherter Endpunkt ersetzt nur seinen Zweck', async () => {
   const supabase = makeFakeSupabase({ ai_endpoints: [storedRow(), { purpose: 'unbekannt', name: 'x', base_url: 'http://x', model: 'm', api_key_encrypted: null }] })
   const endpoints = await resolveAiEndpoints({ supabase, env: ENV })
   assert.deepEqual(endpoints.transcription, {
-    purpose: 'transcription', source: 'database', name: 'Parakeet lokal', baseURL: 'http://ki-maschine:8000/v1', apiKey: 'sk-parakeet-123456', model: 'parakeet-tdt-0.6b-v3',
+    purpose: 'transcription', slot: 'primary', source: 'database', name: 'Parakeet lokal', baseURL: 'http://ki-maschine:8000/v1', apiKey: 'sk-parakeet-123456', model: 'parakeet-tdt-0.6b-v3', fallback: null,
   })
   assert.equal(endpoints.text_generation.source, 'env')
   assert.deepEqual(Object.keys(endpoints).sort(), ['text_generation', 'transcription'])
+})
+
+test('Fallback hängt am primären Endpunkt, egal in welcher Reihenfolge die Zeilen kommen', async () => {
+  const fallbackRow = storedRow({
+    slot: 'fallback', name: 'Whisper', base_url: 'https://openrouter.ai/api/v1', model: 'openai/whisper-large-v3',
+    api_key_encrypted: encryptApiKey('sk-or-fallback', { masterKey: MASTER, purpose: 'transcription', slot: 'fallback' }),
+  })
+  const expectedFallback = {
+    purpose: 'transcription', slot: 'fallback', source: 'database', name: 'Whisper', baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-fallback', model: 'openai/whisper-large-v3',
+  }
+  for (const rows of [[storedRow(), fallbackRow], [fallbackRow, storedRow()]]) {
+    const endpoints = await resolveAiEndpoints({ supabase: makeFakeSupabase({ ai_endpoints: rows }), env: ENV })
+    assert.equal(endpoints.transcription.name, 'Parakeet lokal')
+    assert.deepEqual(endpoints.transcription.fallback, expectedFallback)
+    assert.equal(endpoints.text_generation.fallback, null)
+  }
+})
+
+test('Fallback geht auch hinter dem Env-Standard; unbekannte Slots werden ignoriert', async () => {
+  const supabase = makeFakeSupabase({ ai_endpoints: [
+    storedRow({ purpose: 'text_generation', slot: 'fallback', name: 'Qwen', model: 'qwen', api_key_encrypted: null }),
+    storedRow({ slot: 'dritter' }),
+  ] })
+  const endpoints = await resolveAiEndpoints({ supabase, env: ENV })
+  assert.equal(endpoints.text_generation.source, 'env')
+  assert.equal(endpoints.text_generation.fallback.name, 'Qwen')
+  assert.equal(endpoints.text_generation.fallback.apiKey, KEYLESS_API_KEY)
+  assert.equal(endpoints.transcription.source, 'env')
+  assert.equal(endpoints.transcription.fallback, null)
 })
 
 test('Endpunkt ohne Key nutzt den Platzhalter und braucht keinen Master-Key', async () => {
@@ -175,9 +218,9 @@ test('Resolver behält bei Lesefehler den letzten Stand, ohne Stand wirft er', a
 })
 
 test('toClientOptions und describeAiEndpoint geben den Key nur an den Client', () => {
-  const endpoint = { purpose: 'transcription', source: 'database', name: 'P', baseURL: 'http://host:8000/v1', apiKey: 'sk-geheim', model: 'm' }
+  const endpoint = { purpose: 'transcription', slot: 'fallback', source: 'database', name: 'P', baseURL: 'http://host:8000/v1', apiKey: 'sk-geheim', model: 'm' }
   assert.deepEqual(toClientOptions(endpoint), { baseURL: 'http://host:8000/v1', apiKey: 'sk-geheim' })
   const described = describeAiEndpoint(endpoint)
-  assert.deepEqual(described, { purpose: 'transcription', source: 'database', name: 'P', model: 'm', host: 'host:8000' })
+  assert.deepEqual(described, { purpose: 'transcription', slot: 'fallback', source: 'database', name: 'P', model: 'm', host: 'host:8000' })
   assert.ok(!JSON.stringify(described).includes('sk-geheim'))
 })

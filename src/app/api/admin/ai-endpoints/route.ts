@@ -4,8 +4,10 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { resetEndpoint, saveEndpoint } from '@/lib/ai/endpoint-admin.mjs'
 import { parseEndpointBody } from './schema'
 
-// NIAS-59: save (PUT) or reset to the environment default (DELETE ?purpose=) the AI endpoint
-// of one purpose. Admins only; API keys are encrypted server-side and never returned.
+// NIAS-59: save (PUT) or reset (DELETE ?purpose=&slot=) the AI endpoint of one purpose and
+// slot (NIAS-62: 'primary', default, or 'fallback'). Resetting the primary returns to the
+// environment default, resetting the fallback removes it. Admins only; API keys are encrypted
+// server-side and never returned.
 
 export async function PUT(request: NextRequest) {
   if (!(await getAdminUser())) {
@@ -26,7 +28,8 @@ export async function DELETE(request: NextRequest) {
   if (!(await getAdminUser())) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
-  const result = await resetEndpoint(createAdminClient(), request.nextUrl.searchParams.get('purpose'))
+  const { searchParams } = request.nextUrl
+  const result = await resetEndpoint(createAdminClient(), searchParams.get('purpose'), searchParams.get('slot') ?? 'primary')
   if (!result.ok) {
     return NextResponse.json({ error: result.code, fields: result.fields }, { status: result.status })
   }
