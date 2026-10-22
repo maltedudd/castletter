@@ -5,7 +5,7 @@
 // Dependency-free: the Supabase client and the mail sender are injected so claim/release
 // behaviour can be tested without a database or Resend.
 
-import { isPodcastOnly, MIN_OVERVIEW_ITEMS, sortDigestItems } from './digest.mjs'
+import { compareDigestItems, isPodcastOnly, MIN_OVERVIEW_ITEMS, sortDigestItems } from './digest.mjs'
 import { wantedTargetsOf } from './delivery-targets.mjs'
 import { categoryOf } from '../sources/categories.mjs'
 import { normalizeSummaryStyle } from './summary-style.mjs'
@@ -17,6 +17,9 @@ export const DEFAULT_DELIVERY_MODE = 'daily'
 // `newsletter_sending`) older than this means the run died between claiming and marking it
 // sent; the send cron hands it back.
 export const SENDING_LEASE_MS = 15 * 60 * 1000
+
+// Longest lead title in a digest subject; longer titles are cut with an ellipsis.
+export const MAX_SUBJECT_TITLE_CHARS = 60
 
 // Left join: social posts (Kanban #39) are mailed unchanged and have no newsletter row; every
 // other episode still needs one (see hasDeliverableContent).
@@ -37,11 +40,24 @@ export function buildNewsletterSubject(items, mode) {
   if (normalizeDeliveryMode(mode) === 'immediate' && items.length === 1) {
     return `${items[0].podcastTitle}: ${items[0].episodeTitle}`
   }
-  // Only a pure podcast digest is named after podcasts; any other mix is source-neutral.
+  // A digest leads with its highest-weighted title (podcasts first, independent of the user's
+  // categories) and counts the rest: precise and curious, no joke next to content that may be
+  // serious. Only a pure podcast digest is named after podcasts; any other mix is source-neutral.
+  const lead = subjectTitle([...items].sort(compareDigestItems)[0]?.episodeTitle)
+  const more = items.length - 1
   if (isPodcastOnly(items)) {
-    return `Deine neuen Podcast-Updates (${items.length} ${items.length === 1 ? 'Episode' : 'Episoden'})`
+    if (!lead) return `Für dich reingehört: ${items.length} ${items.length === 1 ? 'neue Folge' : 'neue Folgen'}`
+    return `Für dich reingehört: „${lead}“${more > 0 ? ` und ${more} ${more === 1 ? 'weitere Folge' : 'weitere Folgen'}` : ''}`
   }
-  return `Dein Castletter: ${items.length} ${items.length === 1 ? 'neuer Inhalt' : 'neue Inhalte'}`
+  if (!lead) return `Dein Castletter: ${items.length} ${items.length === 1 ? 'neuer Inhalt' : 'neue Inhalte'}`
+  return `Dein Castletter: „${lead}“${more > 0 ? ` und ${more} ${more === 1 ? 'weiterer Inhalt' : 'weitere Inhalte'}` : ''}`
+}
+
+/** A title for the subject line: one line, at most MAX_SUBJECT_TITLE_CHARS characters. */
+function subjectTitle(title) {
+  const clean = String(title ?? '').replace(/\s+/g, ' ').trim()
+  const chars = Array.from(clean)
+  return chars.length > MAX_SUBJECT_TITLE_CHARS ? `${chars.slice(0, MAX_SUBJECT_TITLE_CHARS - 1).join('').trimEnd()}…` : clean
 }
 
 /**

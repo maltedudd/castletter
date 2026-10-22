@@ -366,6 +366,7 @@ Deine Aufgabe ist Synthese, keine Wiederholung:
 - Prüfe jeden Satz der Einleitung: Könnte er morgen mit anderen Inhalten fast unverändert wieder stehen, ist er zu allgemein – ersetze ihn durch das Konkrete von heute oder streiche ihn.
 - Keine großen Bögen über Jahre, Jahrzehnte oder Epochen („seit Jahren“, „in diesem Jahrzehnt“, „Zeitenwende“, „immer mehr“, „zunehmend“) und keine allgemeinen Themen- oder Trendaussagen, es sei denn, ein heutiger Inhalt belegt genau diesen Bogen ausdrücklich.
 - Tonalität, Beispiele und Gewichtung der Einleitung folgen der heutigen Auswahl: Was heute viel Raum und hohe Priorität hat, steht vorn; was heute nicht vorkommt, kommt nicht vor – auch nicht als Hintergrund oder Vergleich.
+- Die Einleitung darf eine kurze, trockene Pointe enthalten, wenn sie sich aus den heutigen Inhalten ergibt und kein ernstes Thema betrifft; sie ersetzt keinen konkreten Anker. Im Zweifel ohne Pointe.
 - Danach folgt je Kategorie ein kurzer Absatz in Prosa (keine Stichpunkte) mit dem Konkreten aus dieser Kategorie.
 - Jeder Satz nennt konkret, worum es geht: wer, was, welche Zahl, Entscheidung oder Position – so, wie es in den Inhalten steht. Keine Floskeln und keine allgemeine Lagebeschreibung, keine Sätze wie „In der Kategorie X ging es um …“.
 - Belege jede Aussage: Beende jeden Satz mit den Nummern der Inhalte, aus denen er stammt, im Format [1] oder [2][5]. Nur Nummern aus der Liste unten, nur Inhalte, die den Satz wirklich tragen; in einem Kategorie-Absatz nur Nummern von Inhalten dieser Kategorie.

@@ -5,6 +5,7 @@ import {
   normalizeDeliveryMode,
   isDailyDigestDue,
   buildNewsletterSubject,
+  MAX_SUBJECT_TITLE_CHARS,
   SENDING_LEASE_MS,
   claimDeliveries,
   resetStaleSendingEpisodes,
@@ -75,13 +76,39 @@ test('the daily digest is due in the user\'s UTC hour only', () => {
   assert.equal(isDailyDigestDue({ newsletter_delivery_hour: 6 }, 7), false)
 })
 
-test('subject names podcast and episode for an immediate mail, counts episodes for a digest', () => {
+test('subject names podcast and episode for an immediate mail, leads a digest with its first title', () => {
   const one = [{ podcastTitle: 'Lage der Nation', episodeTitle: 'Folge 1' }]
   const two = [...one, { podcastTitle: 'Lage der Nation', episodeTitle: 'Folge 2', sourceType: 'podcast' }]
 
   assert.equal(buildNewsletterSubject(one, 'immediate'), 'Lage der Nation: Folge 1')
-  assert.equal(buildNewsletterSubject(one, 'daily'), 'Deine neuen Podcast-Updates (1 Episode)')
-  assert.equal(buildNewsletterSubject(two, 'daily'), 'Deine neuen Podcast-Updates (2 Episoden)')
+  assert.equal(buildNewsletterSubject(one, 'daily'), 'Für dich reingehört: „Folge 1“')
+  assert.equal(buildNewsletterSubject(two, 'daily'), 'Für dich reingehört: „Folge 1“ und 1 weitere Folge')
+})
+
+test('briefing tone: a digest subject leads with the highest-weighted title, independent of categories', () => {
+  const news = { id: 'news', name: 'News', position: 0 }
+  const web = { podcastTitle: 'tagesschau.de', episodeTitle: 'Artikel', sourceType: 'website', category: news }
+  const pod = { podcastTitle: 'Lage der Nation', episodeTitle: 'Folge 1', sourceType: 'podcast', category: null }
+  const yt = { podcastTitle: 'Kanal', episodeTitle: 'Video', sourceType: 'youtube', category: news }
+  // The website article of the first category is listed first in the mail, the podcast still leads the subject.
+  assert.equal(buildNewsletterSubject([web, yt, pod], 'daily'), 'Dein Castletter: „Folge 1“ und 2 weitere Inhalte')
+  assert.equal(buildNewsletterSubject([web, yt], 'daily'), 'Dein Castletter: „Video“ und 1 weiterer Inhalt')
+})
+
+test('briefing tone: a long lead title is cut on one line; without a title the subject only counts', () => {
+  assert.equal(MAX_SUBJECT_TITLE_CHARS, 60)
+  const long = { podcastTitle: 'Lage der Nation', episodeTitle: `Sehr\nlange   ${'Folge '.repeat(20)}`, sourceType: 'podcast' }
+  const subject = buildNewsletterSubject([long, long], 'daily')
+  const lead = subject.slice(subject.indexOf('„') + 1, subject.indexOf('“'))
+  assert.ok(Array.from(lead).length <= MAX_SUBJECT_TITLE_CHARS)
+  assert.ok(lead.startsWith('Sehr lange Folge') && lead.endsWith('…'))
+  assert.match(subject, /“ und 1 weitere Folge$/)
+
+  const untitled = (sourceType) => ({ podcastTitle: 'Quelle', episodeTitle: '  ', sourceType })
+  assert.equal(buildNewsletterSubject([untitled('podcast'), untitled('podcast')], 'daily'), 'Für dich reingehört: 2 neue Folgen')
+  assert.equal(buildNewsletterSubject([untitled('podcast')], 'daily'), 'Für dich reingehört: 1 neue Folge')
+  assert.equal(buildNewsletterSubject([untitled('website')], 'daily'), 'Dein Castletter: 1 neuer Inhalt')
+  assert.equal(buildNewsletterSubject([untitled('website'), untitled('youtube')], 'daily'), 'Dein Castletter: 2 neue Inhalte')
 })
 
 test('Kanban #42: a digest with anything but podcasts gets a source-neutral subject', () => {
@@ -90,16 +117,16 @@ test('Kanban #42: a digest with anything but podcasts gets a source-neutral subj
   const web = { podcastTitle: 'tagesschau.de', episodeTitle: 'Artikel', sourceType: 'website' }
   const social = { podcastTitle: '@a@b.social', episodeTitle: 'Post', sourceType: 'social' }
 
-  assert.equal(buildNewsletterSubject([pod, yt, web], 'daily'), 'Dein Castletter: 3 neue Inhalte')
-  assert.equal(buildNewsletterSubject([pod, web], 'daily'), 'Dein Castletter: 2 neue Inhalte')
-  assert.equal(buildNewsletterSubject([yt], 'daily'), 'Dein Castletter: 1 neuer Inhalt')
-  assert.equal(buildNewsletterSubject([web, web], 'daily'), 'Dein Castletter: 2 neue Inhalte')
-  assert.equal(buildNewsletterSubject([pod, social], 'daily'), 'Dein Castletter: 2 neue Inhalte')
+  assert.equal(buildNewsletterSubject([pod, yt, web], 'daily'), 'Dein Castletter: „Folge 1“ und 2 weitere Inhalte')
+  assert.equal(buildNewsletterSubject([pod, web], 'daily'), 'Dein Castletter: „Folge 1“ und 1 weiterer Inhalt')
+  assert.equal(buildNewsletterSubject([yt], 'daily'), 'Dein Castletter: „Video“')
+  assert.equal(buildNewsletterSubject([web, web], 'daily'), 'Dein Castletter: „Artikel“ und 1 weiterer Inhalt')
+  assert.equal(buildNewsletterSubject([pod, social], 'daily'), 'Dein Castletter: „Folge 1“ und 1 weiterer Inhalt')
   for (const items of [[pod, yt], [web, web], [pod, social]]) {
     assert.doesNotMatch(buildNewsletterSubject(items, 'daily'), /Podcast|Episode/)
   }
   // Several immediate items fall back to the digest subject, with the same rule.
-  assert.equal(buildNewsletterSubject([pod, yt], 'immediate'), 'Dein Castletter: 2 neue Inhalte')
+  assert.equal(buildNewsletterSubject([pod, yt], 'immediate'), 'Dein Castletter: „Folge 1“ und 1 weiterer Inhalt')
   assert.equal(buildNewsletterSubject([web], 'immediate'), 'tagesschau.de: Artikel')
 })
 
@@ -111,7 +138,7 @@ test('daily podcasts: one digest in the delivery hour, then marked sent', async 
 
   assert.deepEqual(result, { mailsSent: 1, episodesSent: 2 })
   assert.equal(mails[0].to, 'malte@example.com')
-  assert.equal(mails[0].subject, 'Deine neuen Podcast-Updates (2 Episoden)')
+  assert.equal(mails[0].subject, 'Für dich reingehört: „Episode a“ und 1 weitere Folge')
   assert.equal(mails[0].mode, 'daily')
   assert.deepEqual(mails[0].items.map((i) => [i.podcastTitle, i.episodeTitle, i.intro]), [
     ['Lage der Nation', 'Episode a', 'intro a'],
@@ -168,7 +195,7 @@ test('mixed podcasts: immediate episodes go out singly, daily ones only in the d
   assert.deepEqual(mails.map((m) => m.subject), [
     'Hotel Matze: Episode now-1',
     'Hotel Matze: Episode now-2',
-    'Deine neuen Podcast-Updates (2 Episoden)',
+    'Für dich reingehört: „Episode daily-1“ und 1 weitere Folge',
   ])
   assert.deepEqual(mails[2].items.map((i) => i.episodeTitle), ['Episode daily-1', 'Episode daily-2'])
   assert.ok(db.data.episodes.every((e) => e.status === 'newsletter_sent'))
@@ -349,7 +376,7 @@ test('daily digest items follow podcasts → YouTube → Website (RSS), chronolo
     ['yt', 'youtube', '2026-10-03T02:00:00.000Z'],
     ['web', 'website', '2026-10-03T01:00:00.000Z'],
   ])
-  assert.equal(mails[0].subject, 'Dein Castletter: 4 neue Inhalte')
+  assert.equal(mails[0].subject, 'Dein Castletter: „Episode pod-early“ und 3 weitere Inhalte')
   assert.equal(mails[0].overview, null, 'no overview without a generator')
 })
 
@@ -417,7 +444,7 @@ test('a daily digest is recorded as one mail that holds all its episodes', async
     id: 'newsletter_mails-1',
     user_id: 'user-1',
     mode: 'daily',
-    subject: 'Deine neuen Podcast-Updates (2 Episoden)',
+    subject: 'Für dich reingehört: „Episode a“ und 1 weitere Folge',
     episode_count: 2,
     sent_at: NOW.toISOString(),
   }])
@@ -436,7 +463,7 @@ test('immediate mails are recorded one by one, next to the digest of the same ru
 
   assert.deepEqual(
     db.data.newsletter_mails.map((m) => [m.mode, m.episode_count, m.subject]),
-    [['immediate', 1, 'Hotel Matze: Episode now-1'], ['immediate', 1, 'Hotel Matze: Episode now-2'], ['daily', 1, 'Deine neuen Podcast-Updates (1 Episode)']]
+    [['immediate', 1, 'Hotel Matze: Episode now-1'], ['immediate', 1, 'Hotel Matze: Episode now-2'], ['daily', 1, 'Für dich reingehört: „Episode daily-1“']]
   )
   const mailOf = (id) => db.data.episodes.find((e) => e.id === id).newsletter_mail_id
   assert.equal(new Set([mailOf('now-1'), mailOf('now-2'), mailOf('daily-1')]).size, 3)

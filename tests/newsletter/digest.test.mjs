@@ -625,6 +625,9 @@ test('NIAS-55: "Auf einen Blick" is asked for a concrete angle of this edition, 
   assert.match(prompt, /es sei denn, ein heutiger Inhalt belegt genau diesen Bogen ausdrücklich/)
   // Tone, examples and weighting follow today's selection.
   assert.match(prompt, /Tonalität, Beispiele und Gewichtung der Einleitung folgen der heutigen Auswahl/)
+  // Briefing tone: at most a short dry punchline from today's items, never on serious topics.
+  assert.match(prompt, /Die Einleitung darf eine kurze, trockene Pointe enthalten, wenn sie sich aus den heutigen Inhalten ergibt und kein ernstes Thema betrifft; sie ersetzt keinen konkreten Anker\./)
+  assert.match(prompt, /Kein Humor, keine Wortspiele und keine Pointen bei Trauer, Tod, Krisen/)
   const structure = prompt.slice(prompt.indexOf('Erstelle folgende Struktur'))
   assert.match(structure, /## Einleitung\n\[2–5 Sätze Prosa: zuerst der konkrete Tageswinkel dieser Ausgabe/)
 

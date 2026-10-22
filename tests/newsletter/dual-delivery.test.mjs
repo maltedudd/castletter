@@ -145,7 +145,7 @@ test('both: exactly one immediate mail and exactly one later digest entry – im
 
   assert.deepEqual(mails.map((m) => [m.mode, m.subject, titlesOf(m)]), [
     ['immediate', 'Hotel Matze: Episode a', ['Episode a']],
-    ['daily', 'Deine neuen Podcast-Updates (1 Episode)', ['Episode a']],
+    ['daily', 'Für dich reingehört: „Episode a“', ['Episode a']],
   ])
   assert.equal(statusOf(db, 'a'), 'newsletter_sent')
   assert.equal(db.data.episodes[0].newsletter_sent_at, LATER.toISOString())

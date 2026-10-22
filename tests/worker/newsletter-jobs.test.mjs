@@ -151,7 +151,7 @@ test('send sweep mails the daily digest in the user\'s hour, including episodes 
   const summary = await runSendSweep(deps)
 
   assert.deepEqual(summary, { users: 1, dailyDue: 1, mailsSent: 1, episodesSent: 2, errors: 0, archiveErrors: 0, staleSendingReset: 0 })
-  assert.equal(deps.mails[0].subject, 'Deine neuen Podcast-Updates (2 Episoden)')
+  assert.equal(deps.mails[0].subject, 'Für dich reingehört: „Episode falcke“ und 1 weitere Folge')
   assert.deepEqual(db.data.newsletter_mails.map((m) => [m.mode, m.episode_count]), [['daily', 2]])
 })
 

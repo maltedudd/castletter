@@ -89,10 +89,11 @@ const strings = {
     subject: 'Deine neuen Podcast-Updates',
     headerTagline: 'Deine täglichen Podcast-Highlights',
     greeting: 'Hallo,',
-    greetingBody: 'hier sind deine neuen Podcast-Zusammenfassungen:',
+    greetingBody: 'deine Podcasts haben wieder viel erzählt. Hier ist, was davon hängen bleiben sollte:',
     immediateSubject: 'Neue Folge',
     immediateHeaderTagline: 'Neue Folge, frisch zusammengefasst',
-    immediateGreetingBody: (podcast) => `gerade ist eine neue Folge von „${podcast}“ erschienen. Hier ist deine Zusammenfassung:`,
+    immediateGreetingBody: (podcast) => `neu von „${podcast}“ – hier ist das Wichtigste aus der Folge:`,
+    closing: 'Das war’s fürs Erste – bis zum nächsten Castletter!',
     footerSentTo: (email) => `Diese Email wurde an ${email} gesendet.`,
     footerChangeSettings: 'Einstellungen ändern',
     sectionTopics: 'Hauptthemen',
@@ -105,11 +106,11 @@ const strings = {
     readButton: 'Artikel lesen',
     immediateArticleSubject: 'Neuer Artikel',
     immediateArticleHeaderTagline: 'Neuer Artikel, frisch zusammengefasst',
-    immediateArticleGreetingBody: (source) => `gerade ist ein neuer Artikel von „${source}“ erschienen. Hier ist deine Zusammenfassung:`,
+    immediateArticleGreetingBody: (source) => `neu von „${source}“ – hier ist das Wichtigste aus dem Artikel:`,
     settingsLink: 'Einstellungen ändern',
     digestSubject: 'Dein Castletter',
     digestHeaderTagline: 'Dein täglicher Überblick über deine Quellen',
-    digestGreetingBody: 'hier ist das Neue aus deinen Quellen:',
+    digestGreetingBody: 'deine Quellen waren fleißig, du musst es zum Glück nicht sein. Hier ist das Wichtigste:',
     sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'Weitere Inhalte' },
     moreSources: 'Weitere Quellen',
     overviewSources: 'Quellen',
@@ -135,10 +136,11 @@ const strings = {
     subject: 'Your new podcast updates',
     headerTagline: 'Your daily podcast highlights',
     greeting: 'Hello,',
-    greetingBody: 'here are your new podcast summaries:',
+    greetingBody: 'your podcasts have been talking again. Here is what is worth keeping:',
     immediateSubject: 'New episode',
     immediateHeaderTagline: 'New episode, freshly summarized',
-    immediateGreetingBody: (podcast) => `a new episode of “${podcast}” just came out. Here is your summary:`,
+    immediateGreetingBody: (podcast) => `new from “${podcast}” – here are the essentials of the episode:`,
+    closing: 'That’s it for now – see you in the next Castletter!',
     footerSentTo: (email) => `This email was sent to ${email}.`,
     footerChangeSettings: 'Change settings',
     sectionTopics: 'Main topics',
@@ -151,11 +153,11 @@ const strings = {
     readButton: 'Read article',
     immediateArticleSubject: 'New article',
     immediateArticleHeaderTagline: 'New article, freshly summarized',
-    immediateArticleGreetingBody: (source) => `a new article from “${source}” just came out. Here is your summary:`,
+    immediateArticleGreetingBody: (source) => `new from “${source}” – here are the essentials of the article:`,
     settingsLink: 'Change settings',
     digestSubject: 'Your Castletter',
     digestHeaderTagline: 'Your daily overview of your sources',
-    digestGreetingBody: 'here is what is new from your sources:',
+    digestGreetingBody: 'your sources have been busy, so you don’t have to be. Here are the essentials:',
     sections: { podcast: 'Podcasts', youtube: 'YouTube', website: 'Website (RSS)', other: 'More items' },
     moreSources: 'More sources',
     overviewSources: 'Sources',
@@ -352,6 +354,13 @@ export function generateEmailHTML(
 
     <!-- Episode Blocks -->
     ${episodeBlocks}
+
+    <!-- Closing -->
+    <tr>
+      <td style="padding: 20px 30px 30px;">
+        <p style="margin: 0; color: ${COLORS.primary}; font-size: 16px; line-height: 1.6;">${s.closing}</p>
+      </td>
+    </tr>
 
     <!-- Footer -->
     <tr>
@@ -649,6 +658,8 @@ ${s.greeting}
 ${intro.body}
 
 ${overviewText}${blocks.join('\n\n')}
+
+${s.closing}
 ---
 ${s.settingsLink}: ${settingsUrl}
 `
