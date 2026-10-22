@@ -198,9 +198,11 @@ Nach der Transkription läuft in jeder Iteration zusätzlich:
    Stunde, Sofort-Mails als Fallback, Reset hängender Versand-Claims. Ein fehlgeschlagener
    Sweep wird beim nächsten Durchlauf wiederholt.
 
-**Tägliche Sammelmail (Kanban #38, #42):** Betreff „Deine neuen Podcast-Updates (N Episoden)“
-nur, wenn ausschließlich Podcasts enthalten sind, sonst quellenneutral „Dein Castletter: N neue
-Inhalte“. Die Einzelbeiträge stehen in festen Sektionen **Podcasts → YouTube → Website (RSS)
+**Tägliche Sammelmail (Kanban #38, #42):** Der Betreff nennt den höchstgewichteten Titel
+(Podcasts zuerst, unabhängig von Kategorien, auf 60 Zeichen gekürzt) und zählt den Rest:
+„Für dich reingehört: „Titel“ und N weitere Folgen“ nur, wenn ausschließlich Podcasts
+enthalten sind, sonst quellenneutral „Dein Castletter: „Titel“ und N weitere Inhalte“.
+Begrüßung, Schluss und KI-Grundton folgen der Briefing-Tonalität (siehe `summary-style.mjs`). Die Einzelbeiträge stehen in festen Sektionen **Podcasts → YouTube → Website (RSS)
 → Social** (unbekannte Typen zuletzt unter „Weitere Inhalte“), innerhalb jeder Sektion nach
 Veröffentlichung (älteste zuerst). Website-Artikel erscheinen kompakt: Quelle, verlinkter
 Titel und höchstens drei Sätze (der Artikel-Prompt erzeugt nur noch 2–3 Sätze; ältere,

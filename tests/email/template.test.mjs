@@ -21,31 +21,31 @@ const TWO = [...ONE, item('Lage der Nation', 'Folge 2')]
 test('daily digest keeps the daily wording (also as default)', () => {
   for (const html of [generateEmailHTML('m@x.de', TWO, 'https://s', 'de', 'daily'), generateEmailHTML('m@x.de', TWO, 'https://s')]) {
     assert.match(html, /Deine täglichen Podcast-Highlights/)
-    assert.match(html, /hier sind deine neuen Podcast-Zusammenfassungen:/)
+    assert.match(html, /deine Podcasts haben wieder viel erzählt\. Hier ist, was davon hängen bleiben sollte:/)
     assert.match(html, /<title>Deine neuen Podcast-Updates<\/title>/)
   }
   const text = generateEmailPlainText(TWO, 'https://s')
   assert.ok(text.startsWith('Deine neuen Podcast-Updates\n'))
-  assert.match(text, /hier sind deine neuen Podcast-Zusammenfassungen:/)
+  assert.match(text, /deine Podcasts haben wieder viel erzählt\./)
 })
 
 test('immediate mail announces the new episode instead of the daily digest', () => {
   const html = generateEmailHTML('m@x.de', ONE, 'https://s', 'de', 'immediate')
   assert.doesNotMatch(html, /täglich/i)
   assert.match(html, /Neue Folge, frisch zusammengefasst/)
-  assert.match(html, /gerade ist eine neue Folge von „Hotel &lt;Matze&gt;“ erschienen\. Hier ist deine Zusammenfassung:/)
+  assert.match(html, /neu von „Hotel &lt;Matze&gt;“ – hier ist das Wichtigste aus der Folge:/)
   assert.match(html, /<title>Neue Folge: Hotel &lt;Matze&gt;<\/title>/)
 
   const text = generateEmailPlainText(ONE, 'https://s', 'de', 'immediate')
   assert.doesNotMatch(text, /täglich/i)
   assert.ok(text.startsWith('Neue Folge: Hotel <Matze>\n'))
-  assert.match(text, /gerade ist eine neue Folge von „Hotel <Matze>“ erschienen\./)
+  assert.match(text, /neu von „Hotel <Matze>“ – hier ist das Wichtigste aus der Folge:/)
 })
 
 test('immediate wording in English', () => {
   const html = generateEmailHTML('m@x.de', ONE, 'https://s', 'en', 'immediate')
   assert.match(html, /New episode, freshly summarized/)
-  assert.match(html, /a new episode of “Hotel &lt;Matze&gt;” just came out\./)
+  assert.match(html, /new from “Hotel &lt;Matze&gt;” – here are the essentials of the episode:/)
   assert.doesNotMatch(html, /daily/i)
 })
 
@@ -60,7 +60,7 @@ test('website articles link to the article instead of "listen" and get article w
   assert.match(html, /Artikel lesen/)
   assert.doesNotMatch(html, /Episode anhören/)
   assert.match(html, /<title>Neuer Artikel: Stadtblog<\/title>/)
-  assert.match(html, /gerade ist ein neuer Artikel von „Stadtblog“ erschienen/)
+  assert.match(html, /neu von „Stadtblog“ – hier ist das Wichtigste aus dem Artikel:/)
 
   const text = generateEmailPlainText([article], 'https://s', 'en', 'immediate')
   assert.match(text, /→ Read article: https:\/\/blog\.example\.com\/artikel/)
@@ -70,6 +70,37 @@ test('website articles link to the article instead of "listen" and get article w
   const mixed = generateEmailPlainText([ONE[0], article], 'https://s', 'de', 'daily')
   assert.match(mixed, /→ Episode anhören: https:\/\/cdn\.example\/a\.mp3/)
   assert.match(mixed, /→ Artikel lesen: https:\/\/blog\.example\.com\/artikel/)
+})
+
+// ─── Briefing tone: greeting, closing ─────────────────────────────────
+
+test('briefing tone: short direct greeting, information first, a friendly short closing in HTML and plain text', () => {
+  for (const [locale, closing] of [['de', 'Das war’s fürs Erste – bis zum nächsten Castletter!'], ['en', 'That’s it for now – see you in the next Castletter!']]) {
+    for (const [items, mode] of [[TWO, 'daily'], [ONE, 'immediate']]) {
+      const html = generateEmailHTML('m@x.de', items, 'https://s', locale, mode)
+      const closingAt = html.indexOf(closing)
+      assert.ok(closingAt > html.indexOf('<!-- Episode Blocks -->'), `${locale} ${mode}: closing after the content`)
+      assert.ok(closingAt < html.indexOf('<!-- Footer -->'), `${locale} ${mode}: closing before the footer`)
+
+      const text = generateEmailPlainText(items, 'https://s', locale, mode)
+      assert.ok(text.indexOf(closing) > text.indexOf('Kurz.'), `${locale} ${mode}: plain-text closing after the content`)
+      assert.ok(text.indexOf(closing) < text.lastIndexOf('---'), `${locale} ${mode}: plain-text closing before the settings link`)
+    }
+  }
+  // No filler phrases left from the old wording.
+  for (const html of [generateEmailHTML('m@x.de', TWO, 'https://s'), generateEmailHTML('m@x.de', ONE, 'https://s', 'de', 'immediate')]) {
+    assert.doesNotMatch(html, /Hier ist deine Zusammenfassung|gerade ist eine neue/)
+  }
+})
+
+test('briefing tone: an immediate mail stays purely informative – its content is unknown and may be serious', () => {
+  const article = { ...item('Stadtblog', 'Trauer um Altbürgermeisterin'), sourceType: 'website' }
+  for (const items of [ONE, [article]]) {
+    const html = generateEmailHTML('m@x.de', items, 'https://s', 'de', 'immediate')
+    const greeting = html.slice(html.indexOf('<!-- Greeting -->'), html.indexOf('<!-- Episode Blocks -->'))
+    assert.match(greeting, /Hallo,<br>neu von „/)
+    assert.doesNotMatch(greeting, /fleißig|erzählt|zum Glück/)
+  }
 })
 
 // ─── Kanban #38/#42: overview, sections, website length ─────────────
@@ -153,8 +184,8 @@ test('overview and sections in English', () => {
 
 test('Kanban #42: a mixed digest has source-neutral wording; a podcast-only digest keeps the podcast wording', () => {
   for (const [locale, title, tagline, body] of [
-    ['de', 'Dein Castletter', 'Dein täglicher Überblick über deine Quellen', 'hier ist das Neue aus deinen Quellen:'],
-    ['en', 'Your Castletter', 'Your daily overview of your sources', 'here is what is new from your sources:'],
+    ['de', 'Dein Castletter', 'Dein täglicher Überblick über deine Quellen', 'deine Quellen waren fleißig, du musst es zum Glück nicht sein. Hier ist das Wichtigste:'],
+    ['en', 'Your Castletter', 'Your daily overview of your sources', 'your sources have been busy, so you don’t have to be. Here are the essentials:'],
   ]) {
     const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', locale, 'daily')
     assert.ok(html.includes(`<title>${title}</title>`), locale)
