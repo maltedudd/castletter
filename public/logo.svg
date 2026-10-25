@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="cl-gradient" x1="0" y1="0" x2="64" y2="64">
+      <stop offset="0%" stop-color="#005C53"/>
+      <stop offset="100%" stop-color="#042940"/>
+    </linearGradient>
+  </defs>
+  <!-- Envelope shape as "C" -->
+  <path d="M8 8h48v12h-48v-12M8 20h48v8h-48v-8M8 28h48v12h-48v-12M8 40h48v8h-48v-8" stroke="url(#cl-gradient)" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Fold flap -->
+  <path d="M8 8l12-4 22-8 12-4 8 8" fill="url(#cl-gradient)" opacity="0.15"/>
+  <!-- Paper lines hint -->
+  <line x1="14" y1="28" x2="50" y2="28" stroke="#9FC131" stroke-width="1.2" opacity="0.5"/>
+  <line x1="14" y1="34" x2="50" y2="34" stroke="#9FC131" stroke-width="1.2" opacity="0.5"/>
+  <line x1="14" y1="40" x2="50" y2="40" stroke="#9FC131" stroke-width="1.2" opacity="0.5"/>
+</svg>
