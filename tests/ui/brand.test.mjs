@@ -48,3 +48,15 @@ test('signed-in pages contain no prototype example data', () => {
     for (const pattern of PROTOTYPE_DATA) assert.doesNotMatch(text, pattern)
   }
 })
+
+// Decision (Malte, 2026-10-26): the landing example issue shows no real third-party names.
+const THIRD_PARTY = [/St\. Pauli/, /Julian Ivanov/, /AI to the DNA/, /Mainz/]
+
+test('landing example issue contains no real third-party names (DE and EN)', () => {
+  for (const locale of ['de', 'en']) {
+    const landing = JSON.stringify(JSON.parse(read(`messages/${locale}.json`)).landing)
+    for (const pattern of THIRD_PARTY) assert.doesNotMatch(landing, pattern, `${locale}: ${pattern}`)
+  }
+  const page = read('src/app/page.tsx')
+  for (const pattern of THIRD_PARTY) assert.doesNotMatch(page, pattern)
+})

@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { getTranslations } from 'next-intl/server'
 
-// Example issue on the landing page (Claude-Design prototype); marketing illustration only.
+// Example issue on the landing page (Claude-Design prototype layout); neutral example sources,
+// no real third-party names (decision 2026-10-26).
 const PREVIEW_ITEMS = [
-  { kind: 'previewItem1Kind', source: 'previewItem1Source', title: 'previewItem1Title', initials: 'AI', color: '#3B2F4A' },
-  { kind: 'previewItem2Kind', source: 'previewItem2Source', title: 'previewItem2Title', initials: 'JI', color: '#7A3B2E' },
-  { kind: 'previewItem3Kind', source: 'previewItem3Source', title: 'previewItem3Title', initials: 'SP', color: '#C8102E' },
+  { kind: 'previewItem1Kind', source: 'previewItem1Source', title: 'previewItem1Title', initials: 'KI', color: '#3B2F4A' },
+  { kind: 'previewItem2Kind', source: 'previewItem2Source', title: 'previewItem2Title', initials: 'LK', color: '#7A3B2E' },
+  { kind: 'previewItem3Kind', source: 'previewItem3Source', title: 'previewItem3Title', initials: 'VE', color: '#C8102E' },
 ] as const
 
 const STEPS = [
