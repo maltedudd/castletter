@@ -9,7 +9,39 @@ const config: Config = {
   ],
   theme: {
   	extend: {
+  		fontFamily: {
+  			sans: ['var(--font-sans)', 'system-ui', 'sans-serif'],
+  			serif: ['var(--font-serif)', 'Georgia', 'serif'],
+  			mono: ['var(--font-mono)', 'ui-monospace', 'monospace']
+  		},
   		colors: {
+  			/* Claude-Design prototype palette */
+  			castle: {
+  				ink: '#062F3E',
+  				'ink-hover': '#0B3F52',
+  				text: '#3A5562',
+  				muted: '#4A6470',
+  				subtle: '#6A808A',
+  				faint: '#7A8E96',
+  				nav: '#5E7680',
+  				line: '#E3E8E9',
+  				'line-soft': '#EEF1F1',
+  				input: '#D9E0E2',
+  				control: '#C9D5D8',
+  				paper: '#F6F7F5',
+  				mist: '#EEF2F1',
+  				haze: '#F0F3F2',
+  				row: '#FAFBFA',
+  				segment: '#ECF0EF',
+  				amber: '#F0A848',
+  				'amber-deep': '#C07A1C',
+  				green: '#3FA37A',
+  				'warn-bg': '#FCF4E7',
+  				'warn-fg': '#7A4F12',
+  				'warn-dot': '#E0953A',
+  				'instant-bg': '#FBEBD3',
+  				'instant-fg': '#8A5413'
+  			},
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
   			card: {

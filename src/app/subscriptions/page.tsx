@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { useTranslations } from 'next-intl'
+import { useLocale, useTranslations } from 'next-intl'
 import { useAuth } from '@/hooks/useAuth'
 import { createClient } from '@/lib/supabase/client'
 import { deliveryTargetsOf } from '@/lib/newsletter/delivery-targets.mjs'
 import { moveCategory, sortCategories } from '@/lib/sources/categories.mjs'
+import { lastCheckedOf } from '@/lib/ui/source-groups.mjs'
+import { AppPage, PageHeading, PageSpinner } from '@/components/app/AppPage'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
@@ -77,6 +78,7 @@ export default function SubscriptionsPage() {
   const router = useRouter()
   const supabase = createClient()
   const t = useTranslations('subscriptions')
+  const locale = useLocale()
 
   const [sources, setSources] = useState<PodcastSubscription[]>([])
   const [categories, setCategories] = useState<SourceCategory[]>([])
@@ -284,71 +286,64 @@ export default function SubscriptionsPage() {
     setDeleteTarget(null)
   }
 
-  if (authLoading || (loading && user)) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    )
-  }
+  if (authLoading || (loading && user)) return <PageSpinner />
 
   if (!user) return null
 
+  const lastChecked = lastCheckedOf(sources)
+  const lastCheckedText = lastChecked
+    ? new Date(lastChecked).toLocaleString(locale === 'de' ? 'de-DE' : 'en-US', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : null
+  const summary = sources.length === 0
+    ? t('description')
+    : [
+        t('summarySources', { count: sources.length, categories: categories.length }),
+        lastCheckedText ? t('summaryLastChecked', { date: lastCheckedText }) : null,
+      ].filter(Boolean).join(' ')
+
   return (
-    <div className="min-h-screen section-spacing">
-      <div className="max-w-3xl mx-auto container-spacing">
-        {/* Header */}
-        <div className="mb-12">
-          <Link
-            href="/dashboard"
-            className="text-sm text-muted-foreground hover:text-primary transition-colors mb-4 inline-block"
-          >
-            {t('backToDashboard')}
-          </Link>
-          <h1 className="text-4xl font-bold mb-2">{t('title')}</h1>
-          <p className="text-muted-foreground text-lg">
-            {t('description')}
-          </p>
-        </div>
+    <AppPage>
+      <PageHeading title={t('title')} description={summary} />
 
-        {/* Success Message */}
-        <div aria-live="polite">
-          {successMessage && (
-            <Alert role="status" className="mb-6 border-accent bg-accent/10">
-              <AlertDescription className="text-accent-foreground">
-                ✓ {successMessage}
-              </AlertDescription>
-            </Alert>
-          )}
-        </div>
-
-        {/* Error Message */}
-        {errorMessage && (
-          <Alert variant="destructive" className="mb-6">
-            <AlertDescription>{errorMessage}</AlertDescription>
+      {/* Success Message */}
+      <div aria-live="polite">
+        {successMessage && (
+          <Alert role="status" className="border-castle-control bg-castle-mist">
+            <AlertDescription className="text-castle-ink">
+              ✓ {successMessage}
+            </AlertDescription>
           </Alert>
         )}
-
-        {/* Single entry point for every source type */}
-        <div className="mb-12">
-          <AddSourceForm onAdded={handleAdded} />
-        </div>
-
-        {/* Own categories: order of the daily newsletter */}
-        <div className="mb-12">
-          <CategoryManager
-            categories={categories}
-            sourceCounts={sourceCounts}
-            onCreate={handleCreateCategory}
-            onRename={handleRenameCategory}
-            onMove={handleMoveCategory}
-            onDelete={handleDeleteCategory}
-          />
-        </div>
-
-        {/* All sources */}
-        <SourceList sources={sources} categories={categories} onUpdate={handleUpdate} onDelete={handleDeleteClick} />
       </div>
+
+      {/* Error Message */}
+      {errorMessage && (
+        <Alert variant="destructive">
+          <AlertDescription>{errorMessage}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Single entry point for every source type */}
+      <AddSourceForm onAdded={handleAdded} />
+
+      {/* All sources, grouped by category in newsletter order */}
+      <SourceList
+        sources={sources}
+        categories={categories}
+        onUpdate={handleUpdate}
+        onDelete={handleDeleteClick}
+        onMoveCategory={handleMoveCategory}
+      />
+
+      {/* Own categories: create, rename, reorder, delete */}
+      <CategoryManager
+        categories={categories}
+        sourceCounts={sourceCounts}
+        onCreate={handleCreateCategory}
+        onRename={handleRenameCategory}
+        onMove={handleMoveCategory}
+        onDelete={handleDeleteCategory}
+      />
 
       {/* Delete Confirmation Dialog */}
       <DeleteSourceDialog
@@ -357,6 +352,6 @@ export default function SubscriptionsPage() {
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteConfirm}
       />
-    </div>
+    </AppPage>
   )
 }

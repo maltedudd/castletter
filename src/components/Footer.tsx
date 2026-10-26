@@ -1,22 +1,29 @@
 'use client'
 
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
+import { headerVariantOf } from '@/lib/ui/layout.mjs'
 import LanguageSwitcher from './LanguageSwitcher'
 
 export default function Footer() {
   const t = useTranslations('footer')
+  const landing = headerVariantOf(usePathname()) === 'landing'
+  const year = new Date().getFullYear()
+
   return (
-    <footer className="border-t mt-auto py-6 text-center text-sm text-muted-foreground">
-      <p className="mb-2">{t('tagline')}</p>
-      <div className="flex items-center justify-center gap-4">
-        <span>© {new Date().getFullYear()} Castletter</span>
-        <span>·</span>
-        <Link href="/impressum" className="hover:text-foreground transition-colors">{t('imprint')}</Link>
-        <span>·</span>
-        <Link href="/datenschutz" className="hover:text-foreground transition-colors">{t('privacy')}</Link>
-        <span>·</span>
-        <LanguageSwitcher />
+    <footer className={landing ? 'bg-white' : 'border-t border-[#E6EBEB]'}>
+      <div
+        className={`mx-auto flex w-full flex-wrap items-center justify-between gap-3 ${
+          landing ? 'max-w-[1160px] p-7 text-[13.5px] text-castle-muted' : 'max-w-[1080px] px-6 py-[22px] text-[13px] text-castle-subtle'
+        }`}
+      >
+        <span>{landing ? `© ${year} Castletter · ${t('tagline')}` : `© ${year} Castletter`}</span>
+        <div className={`flex items-center ${landing ? 'gap-5' : 'gap-[18px]'}`}>
+          <Link href="/impressum" className="hover:text-castle-ink">{t('imprint')}</Link>
+          <Link href="/datenschutz" className="hover:text-castle-ink">{t('privacy')}</Link>
+          <LanguageSwitcher />
+        </div>
       </div>
     </footer>
   )
