@@ -531,5 +531,14 @@
       "deleted": "Endpunkt gelöscht.",
       "error_primaryMissing": "Bitte zuerst den Endpunkt oben speichern – ein Fallback braucht einen Endpunkt."
     }
+  },
+  "sample": {
+    "eyebrow": "Beispiel-Ausgabe",
+    "title": "So sieht dein Castletter aus",
+    "description": "Alle Quellen und Inhalte hier sind erfunden. Deine echte Ausgabe stellt Castletter aus deinen eigenen Quellen zusammen – zur Uhrzeit, die du festlegst.",
+    "cta": "Kostenlos starten",
+    "back": "Zur Startseite",
+    "mailLabel": "Beispiel-Mail",
+    "recipient": "du@example.org"
   }
 }

@@ -40,12 +40,12 @@ export default async function Home() {
             >
               {t('ctaStart')}
             </Link>
-            <a
-              href="#beispiel"
+            <Link
+              href="/beispiel"
               className="rounded-[10px] border border-castle-input bg-white px-6 py-[15px] text-base font-medium text-castle-ink transition-colors hover:border-castle-ink"
             >
               {t('ctaPreview')}
-            </a>
+            </Link>
           </div>
           <ul className="m-0 flex list-none flex-wrap gap-x-5 gap-y-2 p-0 text-sm text-castle-muted" aria-label={t('sourceTypesLabel')}>
             {SOURCE_TYPES.map((key, index) => (

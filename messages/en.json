@@ -531,5 +531,14 @@
       "deleted": "Endpoint deleted.",
       "error_primaryMissing": "Please save the endpoint above first – a fallback needs an endpoint."
     }
+  },
+  "sample": {
+    "eyebrow": "Sample issue",
+    "title": "This is what your Castletter looks like",
+    "description": "All sources and content here are invented. Your real issue is put together from your own sources – at the time you choose.",
+    "cta": "Start for free",
+    "back": "Back to home",
+    "mailLabel": "Sample mail",
+    "recipient": "you@example.org"
   }
 }

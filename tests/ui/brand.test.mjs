@@ -60,3 +60,10 @@ test('landing example issue contains no real third-party names (DE and EN)', () 
   const page = read('src/app/page.tsx')
   for (const pattern of THIRD_PARTY) assert.doesNotMatch(page, pattern)
 })
+
+test('the mail logo mark is the original logo rendered as PNG (124×112, i.e. 31×28 at 4x)', () => {
+  const png = readFileSync(join(root, 'public/email/logo-mark.png'))
+  assert.equal(png.subarray(1, 4).toString(), 'PNG')
+  assert.equal(png.readUInt32BE(16), 124)
+  assert.equal(png.readUInt32BE(20), 112)
+})
