@@ -245,10 +245,10 @@ export function CategoryManager({
   }
 
   return (
-    <Card>
+    <Card className="rounded-2xl border-castle-line shadow-none">
       <CardHeader>
-        <CardTitle className="text-2xl">{t('categoriesTitle')}</CardTitle>
-        <CardDescription className="text-base">{t('categoriesDescription')}</CardDescription>
+        <CardTitle className="text-[15px] font-semibold">{t('categoriesTitle')}</CardTitle>
+        <CardDescription className="text-[13.5px] text-castle-subtle">{t('categoriesDescription')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <form onSubmit={create} className="space-y-2" noValidate>

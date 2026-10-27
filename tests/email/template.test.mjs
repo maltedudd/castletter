@@ -144,7 +144,7 @@ test('digest shows the overview first – starting with the key themes – then 
   assertInOrder(html, ['<!-- Overview -->', 'Das Wichtigste aus 3 Inhalten', 'Kernthemen', 'Wärmewende: Kommunen müssen bis 2028 planen &lt;jetzt&gt;.',
     'Zusammenhänge &amp; Spannungen', 'Die Kosten bleiben offen.', 'Jeder Punkt verlinkt die Beiträge',
     '<!-- Section: Podcasts -->', 'Intro p.', '<!-- Section: YouTube -->', 'Intro y.', '<!-- Section: Website (RSS) -->', 'Intro w.'], 'html')
-  assert.match(html, /border-left: 6px solid #9FC131/)
+  assert.match(html, /<!-- Overview -->\s*<tr>\s*<td[^>]*>\s*<table[^>]*background-color: #F6F7F5/, 'the overview is set off as a paper card')
   assert.doesNotMatch(html, /<jetzt>/)
   assert.doesNotMatch(html, /Ohne Quelle wird nicht gezeigt/, 'points without a linked source are not shown')
   // Nothing between the overview title and the first key theme: no introductory paragraph.
@@ -329,7 +329,7 @@ test('media and link previews are listed as links, never loaded as images', () =
   assert.match(html, /<a href="https:\/\/files\.social\.example\/a\.jpg"[^>]*>Bild: Ein &lt;Bild&gt;<\/a>/)
   assert.match(html, /<a href="https:\/\/files\.social\.example\/v\.mp4"[^>]*>Video<\/a>/)
   assert.match(html, /<a href="https:\/\/example\.org\/artikel"[^>]*>Link: Artikel<\/a>/)
-  assert.doesNotMatch(html, /<img|javascript:|böse/)
+  assert.doesNotMatch(html.replace(LOGO_IMG, ''), /<img|javascript:|böse/, 'no image but the own logo mark')
 
   const text = generateEmailPlainText([post('4', { social: { html: '<p>Mit Medien</p>', spoiler: null, media } })], 'https://s', 'de', 'immediate')
   assert.match(text, /Bild: Ein <Bild> – https:\/\/files\.social\.example\/a\.jpg/)
@@ -501,4 +501,24 @@ test('Kanban #50: missing parts of the category overview are left out; nothing l
   // Like the classic overview: never in an immediate mail of one item.
   const single = [CATEGORISED[2]]
   assert.doesNotMatch(generateEmailHTML('m@x.de', single, 'https://s', 'de', 'immediate', CATEGORY_OVERVIEW), /<!-- Overview -->/)
+})
+
+const LOGO_IMG = /<img src="https:\/\/s\/email\/logo-mark\.png"[^>]*>/
+
+test('redesign: the mail carries the Castletter logo mark from the app origin, with the wordmark as text', () => {
+  for (const mode of ['daily', 'immediate']) {
+    const html = generateEmailHTML('m@x.de', [typed('p1', 'podcast', null)], 'https://castletter.example/settings', 'de', mode)
+    assert.match(html, /<img src="https:\/\/castletter\.example\/email\/logo-mark\.png" width="31" height="28" alt=""/, mode)
+    assert.match(html, />castletter<\/td>/, `${mode}: wordmark stays readable when images are blocked`)
+    assert.equal(html.match(/<img /g).length, 1, `${mode}: the logo is the only image`)
+  }
+  const relative = generateEmailHTML('m@x.de', [typed('p1', 'podcast', null)], '/settings', 'de', 'daily')
+  assert.doesNotMatch(relative, /<img /, 'no logo image without an absolute http(s) origin')
+  assert.match(relative, />castletter<\/td>/)
+})
+
+test('redesign: the mail uses the new palette and no colours of the old template', () => {
+  const html = generateEmailHTML('m@x.de', DIGEST, 'https://s', 'de', 'daily', OVERVIEW)
+  assert.match(html, /#062F3E/)
+  assert.doesNotMatch(html, /#042940|#005C53|#9FC131|#DBF227|#D6D58E/i)
 })

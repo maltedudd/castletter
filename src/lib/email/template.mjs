@@ -71,15 +71,56 @@ import { safeHttpUrl, sanitizeSocialHtml, socialPostText } from '../social/sanit
  */
 
 
+// Palette and type of the Claude-Design redesign (see tailwind.config.ts `castle`), with
+// web-safe fallbacks: most mail clients do not load web fonts.
 const COLORS = {
-  primary: '#042940',
-  secondary: '#005C53',
-  accent: '#9FC131',
-  highlight: '#DBF227',
-  muted: '#D6D58E',
+  ink: '#062F3E',
+  text: '#3A5562',
+  muted: '#4A6470',
+  subtle: '#6A808A',
+  line: '#E3E8E9',
+  lineSoft: '#EEF1F1',
+  paper: '#F6F7F5',
   bg: '#ffffff',
-  border: '#eeeeee',
-  textMuted: '#666666',
+  amber: '#F0A848',
+  amberDeep: '#C07A1C',
+  warnBg: '#FCF4E7',
+  warnFg: '#7A4F12',
+  warnDot: '#E0953A',
+}
+
+const FONT_SANS = "'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
+const FONT_SERIF = "Spectral, Georgia, 'Times New Roman', serif"
+const FONT_MONO = "'IBM Plex Mono', Menlo, Consolas, monospace"
+
+/** Small uppercase mono label, as on the landing page and in the app. */
+const LABEL = `font-family: ${FONT_MONO}; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.7px;`
+
+/** Ink button of the redesign. */
+const BUTTON = `display: inline-block; background-color: ${COLORS.ink}; color: ${COLORS.bg}; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 500;`
+
+/**
+ * The logo mark is served from the app itself (public/email/logo-mark.png, same origin as
+ * the settings link): first-party, no tracking parameters. The wordmark next to it is text,
+ * so the brand stays visible when a client blocks images.
+ */
+function logoMarkUrl(settingsUrl) {
+  try {
+    const { origin, protocol } = new URL(settingsUrl)
+    return protocol === 'https:' || protocol === 'http:' ? `${origin}/email/logo-mark.png` : null
+  } catch {
+    return null
+  }
+}
+
+function generateLogo(settingsUrl) {
+  const mark = logoMarkUrl(settingsUrl)
+  return `<table role="presentation" cellpadding="0" cellspacing="0">
+          <tr>
+            ${mark ? `<td style="vertical-align: middle; padding-right: 9px;"><img src="${escapeHtml(mark)}" width="31" height="28" alt="" style="display: block; border: 0;"></td>` : ''}
+            <td style="vertical-align: middle; color: ${COLORS.ink}; font-size: 22px; font-weight: 700; letter-spacing: -1.2px;">castletter</td>
+          </tr>
+        </table>`
 }
 
 
@@ -306,6 +347,14 @@ function itemGroups(newsletters, mode, s) {
 }
 
 
+/**
+ * @param {string} userEmail
+ * @param {NewsletterItem[]} newsletters
+ * @param {string} settingsUrl  Absolute settings URL; its origin also serves the logo mark
+ * @param {'de' | 'en'} [locale]
+ * @param {'daily' | 'immediate'} [mode]
+ * @param {DigestOverview | null} [overview]
+ */
 export function generateEmailHTML(
   userEmail,
   newsletters,
@@ -330,21 +379,25 @@ export function generateEmailHTML(
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(intro.title)}</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f9f9f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: ${COLORS.bg};">
+<body style="margin: 0; padding: 0; background-color: ${COLORS.paper}; font-family: ${FONT_SANS}; color: ${COLORS.ink};">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: ${COLORS.paper};">
+  <tr>
+  <td style="padding: 24px 12px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: ${COLORS.bg}; border: 1px solid ${COLORS.line}; border-radius: 16px;">
 
     <!-- Header -->
     <tr>
-      <td style="padding: 40px 30px 20px; text-align: center; background-color: ${COLORS.primary};">
-        <h1 style="margin: 0; color: ${COLORS.bg}; font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Castletter</h1>
-        <p style="margin: 8px 0 0; color: ${COLORS.muted}; font-size: 14px;">${escapeHtml(intro.tagline)}</p>
+      <td style="padding: 32px 36px 0;">
+        ${generateLogo(settingsUrl)}
       </td>
     </tr>
 
     <!-- Greeting -->
     <tr>
-      <td style="padding: 30px 30px 10px;">
-        <p style="margin: 0; color: ${COLORS.primary}; font-size: 16px; line-height: 1.6;">
+      <td style="padding: 36px 36px 12px;">
+        <p style="margin: 0; ${LABEL} color: ${COLORS.subtle};">${escapeHtml(intro.tagline)}</p>
+        <h1 style="margin: 10px 0 14px; color: ${COLORS.ink}; font-family: ${FONT_SERIF}; font-size: 30px; font-weight: 500; line-height: 1.15; letter-spacing: -0.4px;">${escapeHtml(intro.title)}</h1>
+        <p style="margin: 0; color: ${COLORS.text}; font-size: 15px; line-height: 1.6;">
           ${s.greeting}<br>${escapeHtml(intro.body)}
         </p>
       </td>
@@ -357,23 +410,26 @@ export function generateEmailHTML(
 
     <!-- Closing -->
     <tr>
-      <td style="padding: 20px 30px 30px;">
-        <p style="margin: 0; color: ${COLORS.primary}; font-size: 16px; line-height: 1.6;">${s.closing}</p>
+      <td style="padding: 28px 36px 32px;">
+        <p style="margin: 0; color: ${COLORS.text}; font-size: 15px; line-height: 1.6;">${s.closing}</p>
       </td>
     </tr>
 
     <!-- Footer -->
     <tr>
-      <td style="padding: 30px; border-top: 1px solid ${COLORS.border};">
-        <p style="margin: 0 0 10px; color: ${COLORS.textMuted}; font-size: 12px; text-align: center;">
+      <td style="padding: 24px 36px 32px; border-top: 1px solid ${COLORS.line};">
+        <p style="margin: 0 0 6px; color: ${COLORS.subtle}; font-size: 12px; line-height: 1.5;">
           ${s.footerSentTo(userEmail)}
         </p>
-        <p style="margin: 0; text-align: center;">
-          <a href="${settingsUrl}" style="color: ${COLORS.secondary}; font-size: 12px; text-decoration: underline;">${s.footerChangeSettings}</a>
+        <p style="margin: 0;">
+          <a href="${settingsUrl}" style="color: ${COLORS.muted}; font-size: 12px; text-decoration: underline;">${s.footerChangeSettings}</a>
         </p>
       </td>
     </tr>
 
+  </table>
+  </td>
+  </tr>
   </table>
 </body>
 </html>`
@@ -381,17 +437,22 @@ export function generateEmailHTML(
 
 function generateBulletList(items) {
   return items
-    .map((item) => `<li style="margin-bottom: 6px; color: ${COLORS.primary}; font-size: 14px; line-height: 1.5;">${escapeHtml(item)}</li>`)
+    .map((item) => `<li style="margin-bottom: 6px; color: ${COLORS.ink}; font-size: 14.5px; line-height: 1.5;">${escapeHtml(item)}</li>`)
     .join('')
 }
 
-function generateSection(title, items, titleColor) {
+/** Sub-heading inside an item or the overview: small mono label. */
+function labelHeading(title, margin = '0 0 8px') {
+  return `<h3 style="margin: ${margin}; ${LABEL} color: ${COLORS.subtle}; font-weight: 500;">${escapeHtml(title)}</h3>`
+}
+
+function generateSection(title, items) {
   if (!items || items.length === 0) return ''
   return `
           <tr>
-            <td style="padding: 10px 20px;">
-              <h3 style="margin: 0 0 8px; color: ${titleColor}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(title)}</h3>
-              <ul style="margin: 0; padding-left: 20px;">
+            <td style="padding: 10px 0;">
+              ${labelHeading(title)}
+              <ul style="margin: 0; padding-left: 20px; list-style-type: disc;">
                 ${generateBulletList(items)}
               </ul>
             </td>
@@ -400,46 +461,46 @@ function generateSection(title, items, titleColor) {
 
 function generateSourceLinks(sources, s) {
   const links = sources
-    .map((source) => `<a href="${escapeHtml(source.url)}" style="color: ${COLORS.secondary}; text-decoration: underline;">${escapeHtml(sourceLabel(source))}</a>`)
+    .map((source) => `<a href="${escapeHtml(source.url)}" style="color: ${COLORS.muted}; text-decoration: underline;">${escapeHtml(sourceLabel(source))}</a>`)
     .join(' · ')
-  return `<br><span style="color: ${COLORS.textMuted}; font-size: 13px;">${escapeHtml(s.overviewSources)}: ${links}</span>`
+  return `<br><span style="color: ${COLORS.subtle}; font-size: 13px;">${escapeHtml(s.overviewSources)}: ${links}</span>`
 }
 
 function generatePointList(points, s) {
   return points
-    .map((point) => `<li style="margin-bottom: 10px; color: ${COLORS.primary}; font-size: 14px; line-height: 1.5;">${escapeHtml(point.text)}${generateSourceLinks(point.sources, s)}</li>`)
+    .map((point) => `<li style="margin-bottom: 10px; color: ${COLORS.ink}; font-size: 14.5px; line-height: 1.55;">${escapeHtml(point.text)}${generateSourceLinks(point.sources, s)}</li>`)
     .join('')
 }
 
 /** Introduction and category paragraphs of the overview by category (Kanban #50). */
 function generateCategoryOverviewContent(overview, s) {
   const paragraph = (title, point) => `
-              <h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(title)}</h3>
-              <p style="margin: 0; color: ${COLORS.primary}; font-size: 14px; line-height: 1.6;">${escapeHtml(point.text)}${generateSourceLinks(point.sources, s)}</p>`
+              ${labelHeading(title, '18px 0 8px')}
+              <p style="margin: 0; color: ${COLORS.ink}; font-size: 14.5px; line-height: 1.6;">${escapeHtml(point.text)}${generateSourceLinks(point.sources, s)}</p>`
   return (overview.intro ? paragraph(s.overviewIntro, overview.intro) : '')
     + overview.categories.map((point) => paragraph(overviewCategoryHeading(point, s), point)).join('')
     + `
-              <p style="margin: 16px 0 0; color: ${COLORS.textMuted}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewCategoryNote(overview.count))}</p>`
+              <p style="margin: 18px 0 0; color: ${COLORS.subtle}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewCategoryNote(overview.count))}</p>`
 }
 
 function generateOverviewBlock(overview, s) {
   if (!overview) return ''
   const list = (title, points) => points.length === 0 ? '' : `
-              <h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(title)}</h3>
-              <ul style="margin: 0; padding-left: 20px;">
+              ${labelHeading(title, '18px 0 8px')}
+              <ul style="margin: 0; padding-left: 20px; list-style-type: disc;">
                 ${generatePointList(points, s)}
               </ul>`
   return `<!-- Overview -->
     <tr>
-      <td style="padding: 20px 30px 10px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f6f9ec; border: 1px solid ${COLORS.accent}; border-left: 6px solid ${COLORS.accent}; border-radius: 8px;">
+      <td style="padding: 16px 36px 8px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: ${COLORS.paper}; border-radius: 12px;">
           <tr>
-            <td style="padding: 20px;">
-              <p style="margin: 0 0 4px; color: ${COLORS.secondary}; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.overviewLabel)}</p>
-              <h2 style="margin: 0; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(s.overviewTitle(overview.count))}</h2>${overview.categories ? generateCategoryOverviewContent(overview, s) : `${list(s.overviewThemes, overview.themes)}${list(s.overviewConnections, overview.connections)}
-              ${overview.reflection ? `<h3 style="margin: 16px 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.overviewReflection)}</h3>
-              <p style="margin: 0; color: ${COLORS.primary}; font-size: 14px; line-height: 1.5; font-style: italic;">${escapeHtml(overview.reflection)}</p>` : ''}
-              <p style="margin: 16px 0 0; color: ${COLORS.textMuted}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewNote(overview.count))}</p>`}
+            <td style="padding: 22px 24px;">
+              <p style="margin: 0 0 6px; ${LABEL} color: ${COLORS.amberDeep}; font-weight: 600;">${escapeHtml(s.overviewLabel)}</p>
+              <h2 style="margin: 0; color: ${COLORS.ink}; font-family: ${FONT_SERIF}; font-size: 22px; font-weight: 500; line-height: 1.2;">${escapeHtml(s.overviewTitle(overview.count))}</h2>${overview.categories ? generateCategoryOverviewContent(overview, s) : `${list(s.overviewThemes, overview.themes)}${list(s.overviewConnections, overview.connections)}
+              ${overview.reflection ? `${labelHeading(s.overviewReflection, '18px 0 8px')}
+              <p style="margin: 0; color: ${COLORS.text}; font-family: ${FONT_SERIF}; font-size: 15px; line-height: 1.55; font-style: italic;">${escapeHtml(overview.reflection)}</p>` : ''}
+              <p style="margin: 18px 0 0; color: ${COLORS.subtle}; font-size: 12px; line-height: 1.5;">${escapeHtml(s.overviewNote(overview.count))}</p>`}
             </td>
           </tr>
         </table>
@@ -452,24 +513,23 @@ function generateCategoryHeading(title) {
   return `
     <!-- Category: ${escapeHtml(title)} -->
     <tr>
-      <td style="padding: 36px 30px 0;">
-        <h2 style="margin: 0; padding: 10px 14px; border-radius: 6px; background-color: ${COLORS.primary}; color: ${COLORS.bg}; font-size: 22px; font-weight: 700;">${escapeHtml(title)}</h2>
+      <td style="padding: 40px 36px 0;">
+        <h2 style="margin: 0; color: ${COLORS.ink}; font-size: 22px; font-weight: 600; letter-spacing: -0.4px;">${escapeHtml(title)}</h2>
       </td>
     </tr>`
 }
 
-/** Section title: a top-level h2, or an h3 below a category heading. */
+/** Section title: a top-level h2, or an h3 below a category heading; both a quiet mono label over a hairline. */
 function sectionTitleHtml(title, level) {
-  return level === 3
-    ? `<h3 style="margin: 0; padding-bottom: 4px; border-bottom: 2px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 17px; font-weight: 700;">${escapeHtml(title)}</h3>`
-    : `<h2 style="margin: 0; padding-bottom: 6px; border-bottom: 3px solid ${COLORS.accent}; color: ${COLORS.primary}; font-size: 20px; font-weight: 700;">${escapeHtml(title)}</h2>`
+  const tag = level === 3 ? 'h3' : 'h2'
+  return `<${tag} style="margin: 0; padding-bottom: 8px; border-bottom: 1px solid ${COLORS.line}; ${LABEL} color: ${level === 3 ? COLORS.subtle : COLORS.muted}; font-weight: 600;">${escapeHtml(title)}</${tag}>`
 }
 
 function generateSectionHeading(title, level = 2) {
   return `
     <!-- Section: ${escapeHtml(title)} -->
     <tr>
-      <td style="padding: ${level === 3 ? '20px' : '30px'} 30px 0;">
+      <td style="padding: ${level === 3 ? '20px' : '32px'} 36px 0;">
         ${sectionTitleHtml(title, level)}
       </td>
     </tr>`
@@ -478,9 +538,9 @@ function generateSectionHeading(title, level = 2) {
 /** Intro paragraph, or a notice when the item has no summary at all. */
 function generateIntroHtml(item, s) {
   if (!hasSummaryContent(item)) {
-    return `<p style="margin: 0; color: ${COLORS.textMuted}; font-size: 14px; line-height: 1.6; font-style: italic;">${escapeHtml(s.missingSummary)}</p>`
+    return `<p style="margin: 0; color: ${COLORS.subtle}; font-size: 14px; line-height: 1.6; font-style: italic;">${escapeHtml(s.missingSummary)}</p>`
   }
-  return item.intro ? `<p style="margin: 0; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(item.intro)}</p>` : ''
+  return item.intro ? `<p style="margin: 0; color: ${COLORS.text}; font-size: 15px; line-height: 1.6;">${escapeHtml(item.intro)}</p>` : ''
 }
 
 /** Section heading of a digest section; Social keeps its heading with the "unchanged" note (#39). */
@@ -495,77 +555,91 @@ function generateItemBlock(item, s) {
   return digestSourceType(item) === 'website' ? generateWebsiteBlock(item, s) : generateEpisodeBlock(item, s)
 }
 
-/** Website (RSS) article: source, linked title and at most three sentences (Kanban #42). */
-function generateWebsiteBlock(item, s) {
-  const summary = websiteSummary(item)
+/** Source line above an item title. */
+function sourceLine(title) {
+  return `<p style="margin: 0 0 6px; ${LABEL} color: ${COLORS.subtle};">${escapeHtml(title)}</p>`
+}
+
+/** One item: rows inside a full-width table, separated from the next by a hairline. */
+function itemFrame(rows) {
   return `
     <tr>
-      <td style="padding: 20px 30px 10px;">
-        <p style="margin: 0 0 4px; color: ${COLORS.textMuted}; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(item.podcastTitle)}</p>
-        <h3 style="margin: 0 0 8px; font-size: 17px; font-weight: 600; line-height: 1.4;"><a href="${escapeHtml(item.audioUrl)}" style="color: ${COLORS.primary}; text-decoration: none;">${escapeHtml(item.episodeTitle)}</a></h3>
-        ${summary
-          ? `<p style="margin: 0 0 8px; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">${escapeHtml(summary)}</p>`
-          : `<p style="margin: 0 0 8px; color: ${COLORS.textMuted}; font-size: 14px; line-height: 1.6; font-style: italic;">${escapeHtml(s.missingSummary)}</p>`}
-        <a href="${escapeHtml(item.audioUrl)}" style="color: ${COLORS.secondary}; font-size: 14px; text-decoration: underline;">&#8594; ${escapeHtml(s.readButton)}</a>
+      <td style="padding: 0 36px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-bottom: 1px solid ${COLORS.lineSoft};">${rows}
+        </table>
       </td>
     </tr>`
 }
 
-function generateEpisodeBlock(item, s) {
+function ctaRow(href, label) {
   return `
-    <tr>
-      <td style="padding: 20px 30px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border: 1px solid ${COLORS.border}; border-radius: 8px; overflow: hidden;">
+          <!-- CTA Button -->
+          <tr>
+            <td style="padding: 12px 0 24px;">
+              <a href="${escapeHtml(href)}" style="${BUTTON}">
+                ${label}
+              </a>
+            </td>
+          </tr>`
+}
+
+/** Website (RSS) article: source, linked title and at most three sentences (Kanban #42). */
+function generateWebsiteBlock(item, s) {
+  const summary = websiteSummary(item)
+  return itemFrame(`
+          <tr>
+            <td style="padding: 22px 0 20px;">
+              ${sourceLine(item.podcastTitle)}
+              <h3 style="margin: 0 0 8px; font-size: 17px; font-weight: 600; line-height: 1.35; letter-spacing: -0.2px;"><a href="${escapeHtml(item.audioUrl)}" style="color: ${COLORS.ink}; text-decoration: none;">${escapeHtml(item.episodeTitle)}</a></h3>
+              ${summary
+                ? `<p style="margin: 0 0 8px; color: ${COLORS.text}; font-size: 15px; line-height: 1.6;">${escapeHtml(summary)}</p>`
+                : `<p style="margin: 0 0 8px; color: ${COLORS.subtle}; font-size: 14px; line-height: 1.6; font-style: italic;">${escapeHtml(s.missingSummary)}</p>`}
+              <a href="${escapeHtml(item.audioUrl)}" style="color: ${COLORS.ink}; font-size: 14px; font-weight: 500; text-decoration: underline;">&#8594; ${escapeHtml(s.readButton)}</a>
+            </td>
+          </tr>`)
+}
+
+function generateEpisodeBlock(item, s) {
+  return itemFrame(`
           <!-- Episode Header -->
           <tr>
-            <td style="padding: 20px; background-color: ${COLORS.primary};">
-              <p style="margin: 0 0 4px; color: ${COLORS.muted}; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(item.podcastTitle)}</p>
-              <h2 style="margin: 0; color: ${COLORS.bg}; font-size: 18px; font-weight: 600;">${escapeHtml(item.episodeTitle)}</h2>
+            <td style="padding: 24px 0 10px;">
+              ${sourceLine(item.podcastTitle)}
+              <h2 style="margin: 0; color: ${COLORS.ink}; font-size: 19px; font-weight: 600; line-height: 1.3; letter-spacing: -0.3px;">${escapeHtml(item.episodeTitle)}</h2>
             </td>
           </tr>
 
           <!-- Intro -->
           <tr>
-            <td style="padding: 20px 20px 10px;">
+            <td style="padding: 0 0 6px;">
               ${generateIntroHtml(item, s)}
             </td>
           </tr>
 
-          ${generateSection(s.sectionTopics, item.bulletPoints, COLORS.secondary)}
-          ${generateSection(s.sectionTakeaways, item.keyTakeaways, COLORS.secondary)}
-          ${generateSection(s.sectionTips, item.actionItems, COLORS.accent)}
-          ${generateSection(s.sectionQuotes, item.quotes, COLORS.accent)}
-          ${generateSection(s.sectionSpeakers, item.speakers, COLORS.secondary)}
+          ${generateSection(s.sectionTopics, item.bulletPoints)}
+          ${generateSection(s.sectionTakeaways, item.keyTakeaways)}
+          ${generateSection(s.sectionTips, item.actionItems)}
+          ${generateSection(s.sectionQuotes, item.quotes)}
+          ${generateSection(s.sectionSpeakers, item.speakers)}
 
           ${item.reflection ? `
           <!-- Reflection -->
           <tr>
-            <td style="padding: 10px 20px;">
-              <h3 style="margin: 0 0 8px; color: ${COLORS.secondary}; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(s.sectionReflection)}</h3>
-              <p style="margin: 0; color: ${COLORS.textMuted}; font-size: 14px; line-height: 1.5; font-style: italic;">${escapeHtml(item.reflection)}</p>
+            <td style="padding: 10px 0;">
+              ${labelHeading(s.sectionReflection)}
+              <p style="margin: 0; padding-left: 12px; border-left: 2px solid ${COLORS.amber}; color: ${COLORS.text}; font-family: ${FONT_SERIF}; font-size: 15px; line-height: 1.55; font-style: italic;">${escapeHtml(item.reflection)}</p>
             </td>
           </tr>` : ''}
-
-          <!-- CTA Button -->
-          <tr>
-            <td style="padding: 15px 20px 20px;">
-              <a href="${escapeHtml(item.audioUrl)}" style="display: inline-block; background-color: ${COLORS.secondary}; color: ${COLORS.bg}; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">
-                ${isArticle(item) ? '&#8594;' : '&#9654;'} ${escapeHtml(linkLabel(item, s))}
-              </a>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>`
+${ctaRow(item.audioUrl, `${isArticle(item) ? '&#8594;' : '&#9654;'} ${escapeHtml(linkLabel(item, s))}`)}`)
 }
 
 function generateSocialSectionHeading(s, level = 2) {
   return `
     <!-- Section: Social -->
     <tr>
-      <td style="padding: ${level === 3 ? '20px' : '30px'} 30px 0;">
+      <td style="padding: ${level === 3 ? '20px' : '32px'} 36px 0;">
         ${sectionTitleHtml(s.socialSection, level)}
-        <p style="margin: 6px 0 0; color: ${COLORS.textMuted}; font-size: 13px;">${escapeHtml(s.socialSectionNote)}</p>
+        <p style="margin: 8px 0 0; color: ${COLORS.subtle}; font-size: 13px;">${escapeHtml(s.socialSectionNote)}</p>
       </td>
     </tr>`
 }
@@ -586,49 +660,36 @@ function generateSocialBlock(item, s) {
   const spoiler = item.social?.spoiler?.trim()
   const media = socialMediaLinks(item)
   const link = safeHttpUrl(item.audioUrl ?? '')
-  return `
-    <tr>
-      <td style="padding: 20px 30px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border: 1px solid ${COLORS.border}; border-radius: 8px; overflow: hidden;">
+  return itemFrame(`
           <!-- Post Header -->
           <tr>
-            <td style="padding: 14px 20px; background-color: ${COLORS.secondary};">
-              <p style="margin: 0; color: ${COLORS.bg}; font-size: 14px; font-weight: 600;">${escapeHtml(item.podcastTitle)}</p>
+            <td style="padding: 22px 0 0;">
+              <p style="margin: 0; color: ${COLORS.ink}; font-size: 15px; font-weight: 600;">${escapeHtml(item.podcastTitle)}</p>
             </td>
           </tr>
           ${spoiler ? `
           <!-- Content Warning -->
           <tr>
-            <td style="padding: 16px 20px 0;">
-              <p style="margin: 0; padding: 10px 12px; background-color: #fff6e0; border-left: 4px solid #e0a100; color: ${COLORS.primary}; font-size: 14px; font-weight: 600;">${escapeHtml(s.contentWarning)}: ${escapeHtml(spoiler)}</p>
+            <td style="padding: 12px 0 0;">
+              <p style="margin: 0; padding: 10px 12px; background-color: ${COLORS.warnBg}; border-left: 3px solid ${COLORS.warnDot}; border-radius: 4px; color: ${COLORS.warnFg}; font-size: 14px; font-weight: 600;">${escapeHtml(s.contentWarning)}: ${escapeHtml(spoiler)}</p>
             </td>
           </tr>` : ''}
           <!-- Post -->
           <tr>
-            <td style="padding: 16px 20px 6px; color: ${COLORS.primary}; font-size: 15px; line-height: 1.6;">
+            <td style="padding: 12px 0 6px; color: ${COLORS.ink}; font-size: 15px; line-height: 1.6;">
               ${sanitizeSocialHtml(item.social?.html ?? '')}
             </td>
           </tr>
           ${media.length > 0 ? `
           <tr>
-            <td style="padding: 4px 20px;">
-              <ul style="margin: 0; padding-left: 20px;">
-                ${media.map((m) => `<li style="margin-bottom: 4px; font-size: 14px;"><a href="${escapeHtml(m.url)}" style="color: ${COLORS.secondary};">${escapeHtml(mediaLabel(m, s))}</a></li>`).join('')}
+            <td style="padding: 4px 0;">
+              <ul style="margin: 0; padding-left: 20px; list-style-type: disc;">
+                ${media.map((m) => `<li style="margin-bottom: 4px; font-size: 14px;"><a href="${escapeHtml(m.url)}" style="color: ${COLORS.muted};">${escapeHtml(mediaLabel(m, s))}</a></li>`).join('')}
               </ul>
             </td>
           </tr>` : ''}
-          ${link ? `
-          <!-- CTA Button -->
-          <tr>
-            <td style="padding: 15px 20px 20px;">
-              <a href="${escapeHtml(link)}" style="display: inline-block; background-color: ${COLORS.secondary}; color: ${COLORS.bg}; padding: 10px 24px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">
-                &#8594; ${escapeHtml(s.viewPostButton)}
-              </a>
-            </td>
-          </tr>` : ''}
-        </table>
-      </td>
-    </tr>`
+          ${link ? ctaRow(link, `&#8594; ${escapeHtml(s.viewPostButton)}`) : `
+          <tr><td style="padding: 0 0 18px;"></td></tr>`}`)
 }
 
 /** Generate plain text version as fallback */
